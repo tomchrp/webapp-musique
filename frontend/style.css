@@ -269,3 +269,111 @@ input[type="range"]:active::-webkit-slider-thumb {
 .btn-connected {
     background-color: #ff3b30;
 }
+
+/*
+==============================================================================
+Ajout : Skeleton Loaders (États de chargement)
+Description : Animation CSS simulant le chargement des données.
+La classe .skeleton masque le texte réel et applique un dégradé animé 
+de balayage pour indiquer à l'utilisateur qu'une action réseau est en cours.
+==============================================================================
+*/
+@keyframes shimmer {
+    0% {
+        background-position: -200% 0;
+    }
+
+    100% {
+        background-position: 200% 0;
+    }
+}
+
+.skeleton {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.05) 25%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.05) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    color: transparent !important;
+    border-radius: 8px;
+    user-select: none;
+}
+
+.skeleton-cover {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.05) 25%, rgba(255, 255, 255, 0.15) 50%, rgba(255, 255, 255, 0.05) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+}
+
+/*
+==============================================================================
+Ajout : Autocomplétion et Cartes de recherche
+Description : Positionnement absolu du conteneur de résultats sous la barre 
+de recherche et design des tuiles individuelles (mini-pochette, titre, artiste).
+==============================================================================
+*/
+
+.search-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 400px;
+}
+
+.search-bar button {
+    display: none;
+    /* On masque le bouton de validation manuel, inutile désormais */
+}
+
+.search-results-dropdown {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    right: 0;
+    background: var(--bg-color);
+    border: 1px solid var(--glass-border);
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(20px);
+    max-height: 350px;
+    overflow-y: auto;
+    z-index: 50;
+    padding: 10px 0;
+}
+
+.search-item {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 10px 15px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.search-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.search-item img {
+    width: 50px;
+    height: 50px;
+    border-radius: 8px;
+    object-fit: cover;
+}
+
+.search-item-info {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.search-item-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.search-item-artist {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}

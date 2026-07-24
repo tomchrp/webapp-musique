@@ -27,10 +27,14 @@ Ajout des éléments nécessaires pour la Phase 3 :
 
     <div class="app-container">
 
+        <!-- Zone 1 : Utilitaires et Recherche -->
         <header class="top-zone">
-            <div class="search-bar">
-                <input type="text" id="search-input" placeholder="Rechercher un titre, un artiste...">
-                <button id="search-btn">Rechercher</button>
+            <div class="search-wrapper">
+                <div class="search-bar">
+                    <input type="text" id="search-input" placeholder="Rechercher un titre, un artiste..." autocomplete="off">
+                </div>
+                <!-- Dropdown pour les résultats en direct -->
+                <div id="search-results" class="search-results-dropdown hidden"></div>
             </div>
         </header>
 

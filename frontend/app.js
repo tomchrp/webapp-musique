@@ -3,15 +3,11 @@
 Projet : POC Interface Vocale Gemini Live - WebApp
 Fichier : frontend/app.js
 Description : 
-Implémentation des logiques complexes de la Phase 3 :
-1. Barre de recherche : Envoi d'une requête POST vers l'API interne pour lire.
-2. Gestion du temps : Formatage des secondes et synchronisation de l'événement 
-   'ontimeupdate' avec l'input range pour la navigation temporelle.
-3. Transitions audio (Fade In/Out) : Fonctions asynchrones modifiant 
-   progressivement la propriété volume de l'AudioContext pour adoucir les 
-   prises de paroles ou les changements de pistes.
-4. Notifications (Toasts) : Affichage discret géré depuis les payloads JSON 
-   'queue_music'.
+1. Barre de recherche : Implémentation d'une fonction 'debounce' pour 
+   interroger l'API /api/search/live lors de la saisie sans surcharger le 
+   serveur, et génération dynamique des cartes HTML.
+2. Lecteur : Correction du bug de rétention visuelle. La barre de progression 
+   et les timers sont explicitement forcés à 0 avant chaque nouvelle lecture.
 ==============================================================================
 */
 
@@ -29,9 +25,8 @@ const btnNext = document.getElementById('btn-next');
 const backgroundBlur = document.getElementById('background-blur');
 
 const searchInput = document.getElementById('search-input');
-const searchBtn = document.getElementById('search-btn');
+const searchResults = document.getElementById('search-results');
 
-// Nouveaux éléments Phase 3
 const progressBar = document.getElementById('progress-bar');
 const timeCurrent = document.getElementById('time-current');
 const timeTotal = document.getElementById('time-total');
@@ -49,9 +44,10 @@ let audioStartTime = 0;
 let userAnalyser = null;
 let geminiAnalyser = null;
 let animationFrameId = null;
+let searchTimeout = null;
 
 // ==========================================
-// OUTILS UI : Toasts et Formateurs
+// OUTILS UI : Toasts, Formateurs et Skeletons
 // ==========================================
 function showToast(message) {
     toastContainer.textContent = message;
@@ -64,6 +60,33 @@ function formatTime(seconds) {
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
+}
+
+function showLoadingState() {
+    playerContainer.classList.remove("hidden");
+
+    trackTitle.textContent = "Recherche en cours...";
+    trackTitle.classList.add("skeleton");
+
+    trackArtist.textContent = "Veuillez patienter";
+    trackArtist.classList.add("skeleton");
+
+    trackCover.classList.add("skeleton-cover");
+    trackCover.src = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
+    trackCover.classList.remove("hidden");
+
+    nextTrackInfo.textContent = "À suivre : ...";
+
+    // Correction formelle de la remise à zéro visuelle
+    timeCurrent.textContent = "0:00";
+    timeTotal.textContent = "0:00";
+    progressBar.value = 0;
+}
+
+function removeLoadingState() {
+    trackTitle.classList.remove("skeleton");
+    trackArtist.classList.remove("skeleton");
+    trackCover.classList.remove("skeleton-cover");
 }
 
 // ==========================================
@@ -79,7 +102,7 @@ function fadeOut(audio, duration = 400) {
             } else {
                 audio.volume = 0;
                 audio.pause();
-                audio.volume = 1; // Reset pour la prochaine lecture
+                audio.volume = 1;
                 clearInterval(fade);
                 resolve();
             }
@@ -90,7 +113,15 @@ function fadeOut(audio, duration = 400) {
 function fadeIn(audio, duration = 400) {
     if (!audio) return;
     audio.volume = 0;
-    audio.play();
+
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+        playPromise.catch(error => {
+            console.error("Échec critique de la lecture audio :", error);
+            showToast("Erreur de lecture du flux sonore.");
+        });
+    }
+
     const step = 50 / duration;
     const fade = setInterval(() => {
         if (audio.volume < 1 - step) {
@@ -103,27 +134,86 @@ function fadeIn(audio, duration = 400) {
 }
 
 // ==========================================
-// RECHERCHE TEXTUELLE
+// RECHERCHE TEXTUELLE AUTOCOMPLÉTÉÉ
 // ==========================================
-searchBtn.addEventListener('click', async () => {
-    const query = searchInput.value.trim();
-    if (!query) return;
+/**
+ * Écoute la saisie et interroge l'API live après 300ms de pause (Debounce)
+ * Génère dynamiquement le HTML des cartes de résultats.
+ */
+searchInput.addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    const query = e.target.value.trim();
+
+    if (!query) {
+        searchResults.classList.add('hidden');
+        return;
+    }
+
+    searchTimeout = setTimeout(async () => {
+        try {
+            const response = await fetch(`/api/search/live?q=${encodeURIComponent(query)}`);
+            const results = await response.json();
+
+            searchResults.innerHTML = '';
+
+            if (results.length > 0) {
+                results.forEach(track => {
+                    const item = document.createElement('div');
+                    item.className = 'search-item';
+                    item.innerHTML = `
+                        <img src="${track.thumbnail}" alt="Cover">
+                        <div class="search-item-info">
+                            <span class="search-item-title">${track.title}</span>
+                            <span class="search-item-artist">${track.artist}</span>
+                        </div>
+                    `;
+
+                    item.addEventListener('click', () => {
+                        searchInput.value = '';
+                        searchResults.classList.add('hidden');
+                        playSpecificTrack(track.video_id);
+                    });
+
+                    searchResults.appendChild(item);
+                });
+                searchResults.classList.remove('hidden');
+            } else {
+                searchResults.innerHTML = '<div style="padding: 15px; text-align: center; color: var(--text-muted);">Aucun résultat</div>';
+                searchResults.classList.remove('hidden');
+            }
+        } catch (e) {
+            console.error("Erreur de live search :", e);
+        }
+    }, 300);
+});
+
+// Masquer les résultats si clic à l'extérieur
+document.addEventListener('click', (e) => {
+    if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+        searchResults.classList.add('hidden');
+    }
+});
+
+async function playSpecificTrack(videoId) {
+    showLoadingState();
     try {
-        const response = await fetch('/api/search', {
+        const response = await fetch('/api/play_specific', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: query, action: 'play_now' })
+            body: JSON.stringify({ video_id: videoId, action: 'play_now' })
         });
         const data = await response.json();
         if (!data.error) {
             playMusic(data);
         } else {
-            showToast("Aucun résultat");
+            removeLoadingState();
+            showToast(data.error);
         }
     } catch (e) {
-        console.error("Erreur de recherche:", e);
+        removeLoadingState();
+        console.error("Erreur play_specific :", e);
     }
-});
+}
 
 // ==========================================
 // INTERACTION VOCALE
@@ -132,11 +222,11 @@ toggleBtn.addEventListener('click', async () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
         stopConversation();
         if (musicPlayer && musicPlayer.src) {
-            fadeIn(musicPlayer); // Reprise en douceur
+            fadeIn(musicPlayer);
         }
     } else {
         if (musicPlayer && !musicPlayer.paused) {
-            await fadeOut(musicPlayer); // Arrêt en douceur avant de parler
+            await fadeOut(musicPlayer);
         }
         startConversation();
     }
@@ -163,12 +253,20 @@ async function startConversation() {
             } else if (typeof event.data === "string") {
                 try {
                     const message = JSON.parse(event.data);
-                    if (message.action === "play_music") {
+
+                    if (message.action === "loading") {
+                        showLoadingState();
+                    }
+                    else if (message.action === "play_music") {
                         playMusic(message);
-                    } else if (message.action === "queue_music") {
-                        // Ajout silencieux sans interrompre la lecture
+                    }
+                    else if (message.action === "queue_music") {
                         showToast(`Ajouté à la file d'attente`);
                         nextTrackInfo.textContent = `À suivre : ${message.next_title}`;
+                    }
+                    else if (message.action === "error") {
+                        removeLoadingState();
+                        showToast(message.message || "Erreur de traitement");
                     }
                 } catch (e) {
                     console.error("Erreur JSON :", e);
@@ -272,11 +370,12 @@ function setupMusicPlayerEvents() {
     if (!musicPlayer) return;
 
     musicPlayer.ontimeupdate = () => {
+        // Sécurité pour éviter le reset fantôme si la piste n'est pas chargée
+        if (!musicPlayer.duration || isNaN(musicPlayer.duration)) return;
+
         timeCurrent.textContent = formatTime(musicPlayer.currentTime);
-        if (musicPlayer.duration) {
-            progressBar.value = (musicPlayer.currentTime / musicPlayer.duration) * 100;
-            timeTotal.textContent = formatTime(musicPlayer.duration);
-        }
+        progressBar.value = (musicPlayer.currentTime / musicPlayer.duration) * 100;
+        timeTotal.textContent = formatTime(musicPlayer.duration);
     };
 
     musicPlayer.onended = playNextTrack;
@@ -292,6 +391,13 @@ function playMusic(trackData) {
     stopConversation();
     statusText.textContent = "Lecture en cours";
     toggleBtn.className = "fab-btn btn-disconnected";
+
+    removeLoadingState();
+
+    // Correction du bug de rétention du timer visuel
+    progressBar.value = 0;
+    timeCurrent.textContent = "0:00";
+    timeTotal.textContent = "0:00";
 
     playerContainer.classList.remove("hidden");
     trackTitle.textContent = trackData.title || "Titre inconnu";

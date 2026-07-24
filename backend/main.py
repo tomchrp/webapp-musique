@@ -3,13 +3,13 @@
 Projet : POC Interface Vocale Gemini Live - WebApp
 Fichier : backend/main.py
 Description : 
-Serveur backend finalisé pour la Phase 3.
-La route de streaming audio (/stream/{video_id}) a été profondément modifiée.
-Elle intercepte désormais les en-têtes HTTP 'Range' envoyés par le navigateur 
-(FastAPI Request) et les relaie au flux YouTube via httpx. Elle récupère ensuite 
-les en-têtes 'Content-Range' et 'Content-Length' pour construire une réponse 
-HTTP 206 (Partial Content). Cela permet au lecteur HTML5 côté client de 
-naviguer librement dans le flux audio (barre de progression).
+Serveur backend finalisé.
+Ajouts :
+1. Route GET /api/search/live pour alimenter l'autocomplétion textuelle du 
+   frontend de manière optimisée (renvoie uniquement 5 résultats légers).
+2. Route POST /api/play_specific pour déclencher la lecture immédiate ou 
+   l'ajout en file d'attente d'un videoId précis sélectionné par l'utilisateur 
+   depuis les résultats de recherche.
 ==============================================================================
 """
 
@@ -21,6 +21,7 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
+from fastapi import HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from google import genai
@@ -53,12 +54,12 @@ class PlayerState:
         if self.current_track:
             self.history.append(self.current_track)
         self.current_track = track
-        self.manual_queue = []
-        self.autoplay_queue = autoplay_list
+        self.manual_queue = autoplay_list
+        self.autoplay_queue = []
 
     def add_to_queue(self, track: dict, autoplay_list: list):
         self.manual_queue.append(track)
-        self.autoplay_queue = autoplay_list
+        self.manual_queue.extend(autoplay_list)
 
     def next_track(self):
         if self.current_track:
@@ -87,24 +88,24 @@ manage_music_tool = types.Tool(
     function_declarations=[
         types.FunctionDeclaration(
             name="gerer_musique",
-            description="Recherche une musique et contrôle la lecture. Doit être utilisé dès que l'utilisateur veut écouter un morceau, un artiste, ou l'ajouter à la suite.",
+            description="Recherche une musique ou une playlist et contrôle la lecture.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
                     "action": types.Schema(
                         type=types.Type.STRING,
-                        description="Valeur stricte : 'play_now' pour jouer tout de suite (interrompt la musique en cours), ou 'add_to_queue' si l'utilisateur précise vouloir le mettre à la suite ou dans la file d'attente."
+                        description="Valeur stricte : 'play_now' ou 'add_to_queue'."
                     ),
-                    "titre": types.Schema(
+                    "type_recherche": types.Schema(
                         type=types.Type.STRING,
-                        description="Nom du morceau. Laisser vide si non précisé."
+                        description="Valeur stricte : 'chanson' ou 'playlist'."
                     ),
-                    "artiste": types.Schema(
+                    "requete": types.Schema(
                         type=types.Type.STRING,
-                        description="Nom de l'artiste. Laisser vide si non précisé."
+                        description="Le nom du titre, de l'artiste ou de la playlist."
                     )
                 },
-                required=["action"]
+                required=["action", "type_recherche", "requete"]
             )
         )
     ]
@@ -118,10 +119,8 @@ CONFIG = types.LiveConnectConfig(
             "Tu es un agent de conversation francophone utile et direct. "
             "Tu dois converser naturellement avec l'utilisateur en français. "
             "Ne traduis jamais les propos de l'utilisateur. "
-            "Quand tu fournis une réponse, demande toujours s'il a une autre question. "
-            "Si l'utilisateur parle de musique, utilise immédiatement "
-            "l'outil gerer_musique en identifiant correctement son intention "
-            "(lecture immédiate ou ajout à la file) et les entités nommées."
+            "Si l'utilisateur parle de musique ou de playlist, utilise immédiatement "
+            "l'outil gerer_musique en identifiant correctement son intention."
         ))
     ]),
 )
@@ -153,62 +152,62 @@ async def websocket_endpoint(websocket: WebSocket):
                                 for function_call in tool_call.function_calls:
                                     if function_call.name == "gerer_musique":
                                         action = function_call.args.get("action", "play_now")
-                                        titre = function_call.args.get("titre", "")
-                                        artiste = function_call.args.get("artiste", "")
+                                        type_recherche = function_call.args.get("type_recherche", "chanson")
+                                        requete = function_call.args.get("requete", "")
                                         
-                                        query = f"{titre} {artiste}".strip()
-                                        if not query:
+                                        if not requete:
                                             continue
                                             
-                                        search_results = await asyncio.to_thread(ytmusic.search, query, filter="songs", limit=5)
+                                        await websocket.send_text(json.dumps({"action": "loading"}))
                                         
-                                        if search_results:
-                                            best_track = None
-                                            highest_score = -1
-                                            
-                                            for res in search_results:
-                                                res_title = res.get('title', '')
-                                                res_artist = res.get('artists', [{'name': ''}])[0]['name']
-                                                
-                                                score_title = fuzz.ratio(titre.lower(), res_title.lower()) if titre else 100
-                                                score_artist = fuzz.ratio(artiste.lower(), res_artist.lower()) if artiste else 100
-                                                total_score = (score_title + score_artist) / 2
-                                                
-                                                if total_score > highest_score:
-                                                    highest_score = total_score
-                                                    best_track = res
-                                            
-                                            if best_track:
-                                                video_id = best_track['videoId']
-                                                watch_playlist = await asyncio.to_thread(ytmusic.get_watch_playlist, videoId=video_id)
-                                                tracks = watch_playlist.get("tracks", [])
-                                                
+                                        current = None
+                                        queue = []
+                                        
+                                        if type_recherche == "playlist":
+                                            search_results = await asyncio.to_thread(ytmusic.search, requete, filter="playlists", limit=1)
+                                            if search_results:
+                                                browse_id = search_results[0]['browseId']
+                                                playlist_data = await asyncio.to_thread(ytmusic.get_playlist, browse_id)
+                                                tracks = playlist_data.get("tracks", [])
                                                 if tracks:
                                                     current = tracks[0]
                                                     queue = tracks[1:]
-                                                    
-                                                    artist_name = current.get('artists', [{'name': 'Inconnu'}])[0]['name']
-                                                    thumbnails = current.get('thumbnail', [{'url': ''}])
-                                                    thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
-                                                    
-                                                    next_title = "Fin de la liste"
-                                                    if action == "play_now":
-                                                        player_state.play_now(current, queue)
-                                                        next_title = queue[0]['title'] if queue else "Fin de la liste"
-                                                    else:
-                                                        player_state.add_to_queue(current, queue)
-                                                        next_title = player_state.manual_queue[0]['title'] if player_state.manual_queue else queue[0]['title']
-                                                    
-                                                    payload = {
-                                                        "action": "play_music" if action == "play_now" else "queue_music",
-                                                        "video_id": current['videoId'],
-                                                        "title": current['title'],
-                                                        "artist": artist_name,
-                                                        "thumbnail": thumbnail_url,
-                                                        "next_title": next_title
-                                                    }
-                                                    
-                                                    await websocket.send_text(json.dumps(payload))
+                                        else:
+                                            search_results = await asyncio.to_thread(ytmusic.search, requete, filter="songs", limit=1)
+                                            if search_results:
+                                                video_id = search_results[0]['videoId']
+                                                watch_playlist = await asyncio.to_thread(ytmusic.get_watch_playlist, videoId=video_id)
+                                                tracks = watch_playlist.get("tracks", [])
+                                                if tracks:
+                                                    current = tracks[0]
+                                                    queue = tracks[1:]
+                                        
+                                        if current:
+                                            artist_name = current.get('artists', [{'name': 'Inconnu'}])[0]['name']
+                                            thumbnails = current.get('thumbnail', current.get('thumbnails', [{'url': ''}]))
+                                            thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
+                                            
+                                            next_title = "Fin de la liste"
+                                            if action == "play_now":
+                                                player_state.play_now(current, queue)
+                                                next_title = queue[0]['title'] if queue else "Fin de la liste"
+                                            else:
+                                                player_state.add_to_queue(current, queue)
+                                                next_title = player_state.manual_queue[0]['title'] if player_state.manual_queue else (queue[0]['title'] if queue else "Fin de la liste")
+                                            
+                                            payload = {
+                                                "action": "play_music" if action == "play_now" else "queue_music",
+                                                "video_id": current['videoId'],
+                                                "title": current['title'],
+                                                "artist": artist_name,
+                                                "thumbnail": thumbnail_url,
+                                                "next_title": next_title
+                                            }
+                                            
+                                            await websocket.send_text(json.dumps(payload))
+                                        else:
+                                            await websocket.send_text(json.dumps({"action": "error", "message": "Aucun résultat trouvé."}))
+                                            
                 except Exception as e:
                     print(f"Erreur de réception : {e}")
 
@@ -221,46 +220,105 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         traceback.print_exc()
 
+# ==========================================
+# ROUTES API RECHERCHE ET LECTURE
+# ==========================================
+
 class SearchRequest(BaseModel):
     query: str
     action: str = "play_now"
 
+class PlaySpecificRequest(BaseModel):
+    video_id: str
+    action: str = "play_now"
+
+@app.get("/api/search/live")
+async def api_search_live(q: str):
+    """
+    Rôle : Renvoie rapidement les 5 meilleurs résultats pour l'autocomplétion.
+    Cette route évite de déclencher la lourde fonction get_watch_playlist 
+    et se contente d'extraire les métadonnées de surface.
+    """
+    if not q:
+        return []
+    
+    try:
+        search_results = await asyncio.to_thread(ytmusic.search, q, filter="songs", limit=5)
+        formatted_results = []
+        
+        for res in search_results:
+            artist_name = res.get('artists', [{'name': 'Inconnu'}])[0]['name']
+            thumbnails = res.get('thumbnails', [{'url': ''}])
+            thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
+            
+            formatted_results.append({
+                "video_id": res['videoId'],
+                "title": res['title'],
+                "artist": artist_name,
+                "thumbnail": thumbnail_url
+            })
+            
+        return formatted_results
+    except Exception as e:
+        print(f"Erreur recherche live : {e}")
+        return []
+
+@app.post("/api/play_specific")
+async def api_play_specific(request: PlaySpecificRequest):
+    """
+    Rôle : Initialise la file d'attente et la lecture à partir d'un identifiant exact.
+    Appelée lorsque l'utilisateur clique sur un résultat de l'autocomplétion.
+    """
+    try:
+        watch_playlist = await asyncio.to_thread(ytmusic.get_watch_playlist, videoId=request.video_id)
+        tracks = watch_playlist.get("tracks", [])
+        
+        if not tracks:
+            return {"error": "Impossible de générer la lecture pour ce titre."}
+            
+        current = tracks[0]
+        queue = tracks[1:]
+        
+        artist_name = current.get('artists', [{'name': 'Inconnu'}])[0]['name']
+        thumbnails = current.get('thumbnail', [{'url': ''}])
+        thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
+        
+        if request.action == "play_now":
+            player_state.play_now(current, queue)
+            next_title = queue[0]['title'] if queue else "Fin de la liste"
+        else:
+            player_state.add_to_queue(current, queue)
+            next_title = player_state.manual_queue[0]['title'] if player_state.manual_queue else (queue[0]['title'] if queue else "Fin de la liste")
+            
+        return {
+            "action": "play_music" if request.action == "play_now" else "queue_music",
+            "video_id": current['videoId'],
+            "title": current['title'],
+            "artist": artist_name,
+            "thumbnail": thumbnail_url,
+            "next_title": next_title
+        }
+    except Exception as e:
+        print(f"Erreur play_specific : {e}")
+        return {"error": "Erreur lors du traitement du titre."}
+
 @app.post("/api/search")
 async def api_search(request: SearchRequest):
+    # Consolidé par souci de rétrocompatibilité si besoin
     search_results = await asyncio.to_thread(ytmusic.search, request.query, filter="songs", limit=1)
     if not search_results:
         return {"error": "Aucun résultat trouvé"}
         
     best_track = search_results[0]
     video_id = best_track['videoId']
-    watch_playlist = await asyncio.to_thread(ytmusic.get_watch_playlist, videoId=video_id)
-    tracks = watch_playlist.get("tracks", [])
     
-    if not tracks:
-        return {"error": "Impossible de générer la lecture"}
-        
-    current = tracks[0]
-    queue = tracks[1:]
-    
-    artist_name = current.get('artists', [{'name': 'Inconnu'}])[0]['name']
-    thumbnails = current.get('thumbnail', [{'url': ''}])
-    thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
-    
-    if request.action == "play_now":
-        player_state.play_now(current, queue)
-        next_title = queue[0]['title'] if queue else "Fin de la liste"
-    else:
-        player_state.add_to_queue(current, queue)
-        next_title = player_state.manual_queue[0]['title'] if player_state.manual_queue else queue[0]['title']
-        
-    return {
-        "action": "play_music" if request.action == "play_now" else "queue_music",
-        "video_id": current['videoId'],
-        "title": current['title'],
-        "artist": artist_name,
-        "thumbnail": thumbnail_url,
-        "next_title": next_title
-    }
+    # Redirige la logique vers la nouvelle fonction spécialisée
+    fake_request = PlaySpecificRequest(video_id=video_id, action=request.action)
+    return await api_play_specific(fake_request)
+
+# ==========================================
+# ROUTES API LECTEUR
+# ==========================================
 
 @app.get("/player/next")
 async def player_next():
@@ -276,7 +334,7 @@ async def player_next():
     elif player_state.autoplay_queue:
         next_title = player_state.autoplay_queue[0]['title']
         
-    thumbnails = track.get('thumbnail', [{'url': ''}])
+    thumbnails = track.get('thumbnail', track.get('thumbnails', [{'url': ''}]))
     thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
     
     return {
@@ -301,7 +359,7 @@ async def player_prev():
     elif player_state.autoplay_queue:
         next_title = player_state.autoplay_queue[0]['title']
         
-    thumbnails = track.get('thumbnail', [{'url': ''}])
+    thumbnails = track.get('thumbnail', track.get('thumbnails', [{'url': ''}]))
     thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
     
     return {
@@ -314,10 +372,6 @@ async def player_prev():
 
 @app.get("/stream/{video_id}")
 async def stream_audio(video_id: str, request: Request):
-    """
-    Correction : Instanciation correcte des en-têtes dans la StreamingResponse 
-    pour autoriser le navigateur à naviguer dans le flux audio.
-    """
     ydl_opts = {
         'format': 'bestaudio/best',
         'quiet': True,
@@ -337,11 +391,12 @@ async def stream_audio(video_id: str, request: Request):
         if range_header:
             headers["Range"] = range_header
 
-        client_http = httpx.AsyncClient()
+        client_http = httpx.AsyncClient(follow_redirects=True)
         req = client_http.build_request("GET", audio_url, headers=headers)
         r = await client_http.send(req, stream=True)
         
-        # Extraction stricte des en-têtes pour la StreamingResponse
+        r.raise_for_status()
+        
         resp_headers = {}
         for key, value in r.headers.items():
             if key.lower() in ['content-type', 'content-length', 'content-range', 'accept-ranges']:
@@ -353,7 +408,6 @@ async def stream_audio(video_id: str, request: Request):
             await r.aclose()
             await client_http.aclose()
 
-        # Injection directe dans le constructeur (seule méthode valide)
         return StreamingResponse(
             stream_generator(), 
             status_code=r.status_code, 
@@ -361,5 +415,7 @@ async def stream_audio(video_id: str, request: Request):
         )
         
     except Exception as e:
-        print(f"Erreur de flux : {e}")
-        return {"error": "Impossible de lire le flux audio."}
+        print(f"Erreur backend sur le flux audio : {e}")
+        raise HTTPException(status_code=500, detail="Impossible de lire le flux audio.")
+
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
