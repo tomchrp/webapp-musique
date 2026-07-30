@@ -3,6 +3,7 @@ venv/
 
 # Variables d'environnement (Sécurité critique)
 .env
+*.json
 
 # Caches Python
 __pycache__/

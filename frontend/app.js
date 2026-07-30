@@ -1,13 +1,12 @@
 /*
 ==============================================================================
-Projet : POC Interface Vocale Gemini Live - WebApp
-Fichier : frontend/app.js
-Description : 
-1. Barre de recherche : Implémentation d'une fonction 'debounce' pour 
-   interroger l'API /api/search/live lors de la saisie sans surcharger le 
-   serveur, et génération dynamique des cartes HTML.
-2. Lecteur : Correction du bug de rétention visuelle. La barre de progression 
-   et les timers sont explicitement forcés à 0 avant chaque nouvelle lecture.
+Chemin : frontend/app.js
+Utilité : Script principal de l'interface client (Frontend).
+          Gère les interactions UI, la communication WebSocket avec l'agent IA,
+          et le contrôle du lecteur audio HTML5.
+Mise à jour : Implémentation de la Phase 1 (File d'attente infinie). Ajout de 
+              la surveillance de remaining_queue_length et de la fonction de 
+              recharge silencieuse (triggerRefill) pour générer une radio continue.
 ==============================================================================
 */
 
@@ -46,6 +45,9 @@ let geminiAnalyser = null;
 let animationFrameId = null;
 let searchTimeout = null;
 
+// Verrou pour éviter de lancer plusieurs recharges en même temps
+let isRefilling = false;
+
 // ==========================================
 // OUTILS UI : Toasts, Formateurs et Skeletons
 // ==========================================
@@ -77,7 +79,6 @@ function showLoadingState() {
 
     nextTrackInfo.textContent = "À suivre : ...";
 
-    // Correction formelle de la remise à zéro visuelle
     timeCurrent.textContent = "0:00";
     timeTotal.textContent = "0:00";
     progressBar.value = 0;
@@ -136,10 +137,6 @@ function fadeIn(audio, duration = 400) {
 // ==========================================
 // RECHERCHE TEXTUELLE AUTOCOMPLÉTÉÉ
 // ==========================================
-/**
- * Écoute la saisie et interroge l'API live après 300ms de pause (Debounce)
- * Génère dynamiquement le HTML des cartes de résultats.
- */
 searchInput.addEventListener('input', (e) => {
     clearTimeout(searchTimeout);
     const query = e.target.value.trim();
@@ -187,7 +184,6 @@ searchInput.addEventListener('input', (e) => {
     }, 300);
 });
 
-// Masquer les résultats si clic à l'extérieur
 document.addEventListener('click', (e) => {
     if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
         searchResults.classList.add('hidden');
@@ -259,10 +255,6 @@ async function startConversation() {
                     }
                     else if (message.action === "play_music") {
                         playMusic(message);
-                    }
-                    else if (message.action === "queue_music") {
-                        showToast(`Ajouté à la file d'attente`);
-                        nextTrackInfo.textContent = `À suivre : ${message.next_title}`;
                     }
                     else if (message.action === "error") {
                         removeLoadingState();
@@ -370,7 +362,6 @@ function setupMusicPlayerEvents() {
     if (!musicPlayer) return;
 
     musicPlayer.ontimeupdate = () => {
-        // Sécurité pour éviter le reset fantôme si la piste n'est pas chargée
         if (!musicPlayer.duration || isNaN(musicPlayer.duration)) return;
 
         timeCurrent.textContent = formatTime(musicPlayer.currentTime);
@@ -394,7 +385,6 @@ function playMusic(trackData) {
 
     removeLoadingState();
 
-    // Correction du bug de rétention du timer visuel
     progressBar.value = 0;
     timeCurrent.textContent = "0:00";
     timeTotal.textContent = "0:00";
@@ -420,12 +410,42 @@ function playMusic(trackData) {
     btnPlayPause.textContent = "||";
 }
 
+/**
+ * Descriptif :
+ * Fonction asynchrone appelée silencieusement pour étendre la file d'attente.
+ * Verrouille l'exécution avec 'isRefilling' pour éviter de spammer le serveur.
+ */
+async function triggerRefill(videoId) {
+    if (isRefilling) return;
+    isRefilling = true;
+    try {
+        const response = await fetch('/api/player/refill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ last_video_id: videoId })
+        });
+        const result = await response.json();
+        if (result.status === "success") {
+            console.log(`Radio étendue : ${result.added} nouveaux titres.`);
+        }
+    } catch (e) {
+        console.error("Erreur lors du refill :", e);
+    } finally {
+        isRefilling = false;
+    }
+}
+
 async function playNextTrack() {
     try {
         const response = await fetch('/player/next');
         const data = await response.json();
         if (data && !data.error) {
             playMusic(data);
+
+            // Si la file d'attente s'épuise, on déclenche le script de recharge
+            if (data.remaining_queue_length !== undefined && data.remaining_queue_length <= 3) {
+                triggerRefill(data.video_id);
+            }
         } else {
             showToast("Fin de la file d'attente");
         }
@@ -442,6 +462,10 @@ async function playPrevTrack() {
         const data = await response.json();
         if (data && !data.error) {
             playMusic(data);
+
+            if (data.remaining_queue_length !== undefined && data.remaining_queue_length <= 3) {
+                triggerRefill(data.video_id);
+            }
         }
     } catch (error) { console.error(error); }
 }

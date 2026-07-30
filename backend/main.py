@@ -1,41 +1,41 @@
 """
 ==============================================================================
-Projet : POC Interface Vocale Gemini Live - WebApp
-Fichier : backend/main.py
-Description : 
-Serveur backend finalisé.
-Ajouts :
-1. Route GET /api/search/live pour alimenter l'autocomplétion textuelle du 
-   frontend de manière optimisée (renvoie uniquement 5 résultats légers).
-2. Route POST /api/play_specific pour déclencher la lecture immédiate ou 
-   l'ajout en file d'attente d'un videoId précis sélectionné par l'utilisateur 
-   depuis les résultats de recherche.
+Chemin : backend/main.py
+Utilité : Point d'entrée principal de l'API FastAPI.
+          - Maintient le tunnel WebSocket avec Gemini Live.
+          - Implémente le routage des groupes d'outils (A, B, C) vers le frontend.
+          - Capte les signaux d'interruption vocale (barge-in).
+          - Déduit la fin du tour de l'IA (turn_complete) par la sortie de la 
+            boucle asynchrone du SDK, permettant au frontend de déclencher
+            la fermeture du micro pour les actions du Groupe B.
+          - Utilise des fonctions d'envoi sécurisées pour éviter les crashs.
 ==============================================================================
 """
 
 import os
+import json
 import asyncio
 import traceback
-import json
 from pathlib import Path
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
-from fastapi import HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
-from ytmusicapi import YTMusic
 import yt_dlp
 import httpx
+from google import genai
+from google.genai import types
 from thefuzz import fuzz
+
+# Importations absolues depuis la racine 'backend'
+from backend.services.ytmusic_service import ytmusic_service
+from backend.core.player_state import player_state
 
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 app = FastAPI()
-ytmusic = YTMusic()
 
 MODEL = "gemini-3.1-flash-live-preview"
 client = genai.Client(
@@ -43,91 +43,106 @@ client = genai.Client(
     api_key=os.environ.get("GEMINI_API_KEY"),
 )
 
-class PlayerState:
-    def __init__(self):
-        self.history = []
-        self.current_track = None
-        self.manual_queue = []
-        self.autoplay_queue = []
-
-    def play_now(self, track: dict, autoplay_list: list):
-        if self.current_track:
-            self.history.append(self.current_track)
-        self.current_track = track
-        self.manual_queue = autoplay_list
-        self.autoplay_queue = []
-
-    def add_to_queue(self, track: dict, autoplay_list: list):
-        self.manual_queue.append(track)
-        self.manual_queue.extend(autoplay_list)
-
-    def next_track(self):
-        if self.current_track:
-            self.history.append(self.current_track)
-            
-        if self.manual_queue:
-            self.current_track = self.manual_queue.pop(0)
-        elif self.autoplay_queue:
-            self.current_track = self.autoplay_queue.pop(0)
-        else:
-            self.current_track = None
-            
-        return self.current_track
-
-    def prev_track(self):
-        if not self.history:
-            return None
-        if self.current_track:
-            self.manual_queue.insert(0, self.current_track)
-        self.current_track = self.history.pop()
-        return self.current_track
-
-player_state = PlayerState()
-
-manage_music_tool = types.Tool(
+gemini_tools = types.Tool(
     function_declarations=[
         types.FunctionDeclaration(
             name="gerer_musique",
-            description="Recherche une musique ou une playlist et contrôle la lecture.",
+            description="Recherche et lit une musique, un artiste ou une playlist PUBLIQUE sur YouTube. NE L'UTILISE PAS si l'utilisateur précise que la playlist lui appartient (ex: 'ma playlist').",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "action": types.Schema(
-                        type=types.Type.STRING,
-                        description="Valeur stricte : 'play_now' ou 'add_to_queue'."
-                    ),
-                    "type_recherche": types.Schema(
-                        type=types.Type.STRING,
-                        description="Valeur stricte : 'chanson' ou 'playlist'."
-                    ),
-                    "requete": types.Schema(
-                        type=types.Type.STRING,
-                        description="Le nom du titre, de l'artiste ou de la playlist."
-                    )
+                    "action": types.Schema(type=types.Type.STRING, description="'play_now' ou 'add_to_queue'"),
+                    "type_recherche": types.Schema(type=types.Type.STRING, description="'chanson' ou 'playlist'"),
+                    "requete": types.Schema(type=types.Type.STRING, description="Nom du titre ou de la playlist publique.")
                 },
                 required=["action", "type_recherche", "requete"]
             )
-        )
+        ),
+        types.FunctionDeclaration(
+            name="jouer_playlist_personnelle",
+            description="EXCLUSIVEMENT pour chercher et lancer la lecture d'une playlist PRIVÉE/PERSONNELLE appartenant à l'utilisateur. Utilise cet outil dès que l'utilisateur dit 'ma playlist', 'mes favoris' ou 'ma bibliothèque'.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "nom_playlist": types.Schema(type=types.Type.STRING, description="Le nom précis de la playlist de l'utilisateur.")
+                },
+                required=["nom_playlist"]
+            )
+        ),
+        types.FunctionDeclaration(
+            name="sauvegarder_titre_actuel",
+            description="Ajoute le titre en cours de lecture aux favoris (Likes)."
+        ),
+        types.FunctionDeclaration(
+            name="creer_playlist_avec_titre",
+            description="Crée une nouvelle playlist privée et y ajoute le titre en cours de lecture.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "nom_playlist": types.Schema(type=types.Type.STRING, description="Nom de la future playlist.")
+                },
+                required=["nom_playlist"]
+            )
+        ),
+        types.FunctionDeclaration(
+            name="ajouter_titre_playlist_existante",
+            description="Ajoute le titre en cours à une des playlists existantes de l'utilisateur.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "nom_playlist": types.Schema(type=types.Type.STRING, description="Nom approximatif de la playlist cible.")
+                },
+                required=["nom_playlist"]
+            )
+        ),
+        types.FunctionDeclaration(
+            name="jouer_style_actuel",
+            description="Génère une nouvelle radio de découverte basée sur le titre actuellement en cours de lecture."
+        ),
+        types.FunctionDeclaration(
+            name="lister_playlists_personnelles",
+            description="Récupère la liste des playlists privées de l'utilisateur. Utilise cet outil si l'utilisateur demande quelles sont ses playlists, ou si tu as un doute sur le nom exact avant de lancer la lecture."
+        ),
     ]
 )
 
 CONFIG = types.LiveConnectConfig(
     response_modalities=["AUDIO"],
-    tools=[manage_music_tool],
+    tools=[gemini_tools],
     system_instruction=types.Content(parts=[
         types.Part(text=(
-            "Tu es un agent de conversation francophone utile et direct. "
-            "Tu dois converser naturellement avec l'utilisateur en français. "
-            "Ne traduis jamais les propos de l'utilisateur. "
-            "Si l'utilisateur parle de musique ou de playlist, utilise immédiatement "
-            "l'outil gerer_musique en identifiant correctement son intention."
+            "Tu es un assistant musical francophone direct et efficace. "
+            "Tu gères la musique de l'utilisateur. "
+            "RÈGLE ABSOLUE : Si l'utilisateur dit 'Joue ma playlist [Nom]', tu DOIS utiliser l'outil 'jouer_playlist_personnelle'. L'outil 'gerer_musique' est strictement réservé aux recherches publiques. "
+            "Confirme toujours oralement de manière très courte (ex: 'Je lance ta playlist', 'Titre sauvegardé') après l'action. "
+            "Si un outil renvoie un message 'DÉFAUT D'AUTHENTIFICATION', tu dois annoncer le problème exact à l'utilisateur."
         ))
     ]),
 )
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """
+    Descriptif détaillé :
+    Gère la boucle d'interaction de l'agent avec tolérance aux pannes réseau.
+    Intègre les fonctions safe_send_text et safe_send_bytes pour éviter les crashs.
+    L'ordre 'turn_complete' est désormais envoyé à l'extérieur de la sous-boucle 
+    de lecture, une fois que l'itérateur du SDK indique que l'IA a fini de parler.
+    """
     await websocket.accept()
+
+    async def safe_send_text(text: str):
+        try:
+            await websocket.send_text(text)
+        except Exception:
+            pass 
+
+    async def safe_send_bytes(data: bytes):
+        try:
+            await websocket.send_bytes(data)
+        except Exception:
+            pass 
+
     try:
         async with client.aio.live.connect(model=MODEL, config=CONFIG) as session:
             async def receive_from_client():
@@ -137,7 +152,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         await session.send_realtime_input(
                             audio={"data": data, "mime_type": "audio/pcm;rate=16000"}
                         )
-                except WebSocketDisconnect:
+                except Exception:
                     pass
 
             async def receive_from_gemini():
@@ -145,71 +160,261 @@ async def websocket_endpoint(websocket: WebSocket):
                     while True:
                         turn = session.receive()
                         async for response in turn:
+                            
+                            if server_content := getattr(response, "server_content", None):
+                                if getattr(server_content, "interrupted", False):
+                                    await safe_send_text(json.dumps({"action": "interrupted"}))
+
                             if data := response.data:
-                                await websocket.send_bytes(data)
+                                await safe_send_bytes(data)
                                 
                             if tool_call := response.tool_call:
+                                tool_responses_list = []
+                                
                                 for function_call in tool_call.function_calls:
-                                    if function_call.name == "gerer_musique":
-                                        action = function_call.args.get("action", "play_now")
-                                        type_recherche = function_call.args.get("type_recherche", "chanson")
-                                        requete = function_call.args.get("requete", "")
+                                    nom_outil = function_call.name
+                                    args = function_call.args
+                                    
+                                    groupe = "C" 
+                                    if nom_outil in ["gerer_musique", "jouer_playlist_personnelle", "jouer_style_actuel"]:
+                                        groupe = "A" 
+                                    elif nom_outil in ["sauvegarder_titre_actuel", "creer_playlist_avec_titre", "ajouter_titre_playlist_existante"]:
+                                        groupe = "B" 
                                         
-                                        if not requete:
-                                            continue
+                                    await safe_send_text(json.dumps({"action": "tool_called", "group": groupe}))
+                                    
+                                    print(f"\n{'='*50}")
+                                    print(f"[APPEL D'OUTIL PAR GEMINI] -> Groupe {groupe}")
+                                    print(f"Outil appelé : {nom_outil}")
+                                    print(f"Arguments    : {args}")
+                                    print(f"{'='*50}\n")
+                                    
+                                    resultat_execution = {"status": "success", "message": "Opération réussie."}
+                                    
+                                    try:
+                                        if nom_outil == "gerer_musique":
+                                            action = args.get("action", "play_now")
+                                            type_recherche = args.get("type_recherche", "chanson")
+                                            requete = args.get("requete", "")
                                             
-                                        await websocket.send_text(json.dumps({"action": "loading"}))
-                                        
-                                        current = None
-                                        queue = []
-                                        
-                                        if type_recherche == "playlist":
-                                            search_results = await asyncio.to_thread(ytmusic.search, requete, filter="playlists", limit=1)
-                                            if search_results:
-                                                browse_id = search_results[0]['browseId']
-                                                playlist_data = await asyncio.to_thread(ytmusic.get_playlist, browse_id)
-                                                tracks = playlist_data.get("tracks", [])
-                                                if tracks:
-                                                    current = tracks[0]
-                                                    queue = tracks[1:]
-                                        else:
-                                            search_results = await asyncio.to_thread(ytmusic.search, requete, filter="songs", limit=1)
-                                            if search_results:
-                                                video_id = search_results[0]['videoId']
-                                                watch_playlist = await asyncio.to_thread(ytmusic.get_watch_playlist, videoId=video_id)
-                                                tracks = watch_playlist.get("tracks", [])
-                                                if tracks:
-                                                    current = tracks[0]
-                                                    queue = tracks[1:]
-                                        
-                                        if current:
-                                            artist_name = current.get('artists', [{'name': 'Inconnu'}])[0]['name']
-                                            thumbnails = current.get('thumbnail', current.get('thumbnails', [{'url': ''}]))
-                                            thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
+                                            await safe_send_text(json.dumps({"action": "loading"}))
                                             
-                                            next_title = "Fin de la liste"
-                                            if action == "play_now":
-                                                player_state.play_now(current, queue)
-                                                next_title = queue[0]['title'] if queue else "Fin de la liste"
+                                            current = None
+                                            queue = []
+                                            
+                                            if type_recherche == "playlist":
+                                                search_results = await ytmusic_service.search(requete, filter="playlists", limit=1)
+                                                if search_results:
+                                                    browse_id = search_results[0]['browseId']
+                                                    radio_data = await ytmusic_service.generate_radio(playlist_id=browse_id)
+                                                    tracks = radio_data.get("tracks", [])
+                                                    if tracks:
+                                                        current = tracks[0]
+                                                        queue = tracks[1:]
                                             else:
-                                                player_state.add_to_queue(current, queue)
-                                                next_title = player_state.manual_queue[0]['title'] if player_state.manual_queue else (queue[0]['title'] if queue else "Fin de la liste")
+                                                search_results = await ytmusic_service.search(requete, filter="songs", limit=1)
+                                                if search_results:
+                                                    video_id = search_results[0]['videoId']
+                                                    radio_data = await ytmusic_service.generate_radio(video_id=video_id)
+                                                    tracks = radio_data.get("tracks", [])
+                                                    if tracks:
+                                                        current = tracks[0]
+                                                        queue = tracks[1:]
                                             
-                                            payload = {
-                                                "action": "play_music" if action == "play_now" else "queue_music",
-                                                "video_id": current['videoId'],
-                                                "title": current['title'],
-                                                "artist": artist_name,
-                                                "thumbnail": thumbnail_url,
-                                                "next_title": next_title
-                                            }
-                                            
-                                            await websocket.send_text(json.dumps(payload))
+                                            if current:
+                                                artist_name = current.get('artists', [{'name': 'Inconnu'}])[0]['name']
+                                                thumbnails = current.get('thumbnail', current.get('thumbnails', [{'url': ''}]))
+                                                thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
+                                                
+                                                if action == "play_now":
+                                                    player_state.play_now(current, queue)
+                                                
+                                                next_title = player_state.queue[0]['title'] if player_state.queue else "Fin de la liste"
+                                                
+                                                payload = {
+                                                    "action": "play_music",
+                                                    "video_id": current['videoId'],
+                                                    "title": current['title'],
+                                                    "artist": artist_name,
+                                                    "thumbnail": thumbnail_url,
+                                                    "next_title": next_title
+                                                }
+                                                await safe_send_text(json.dumps(payload))
+                                            else:
+                                                resultat_execution = {"status": "error", "message": "Aucun titre trouvé."}
+                                                await safe_send_text(json.dumps({"action": "error", "message": "Aucun résultat trouvé."}))
+
                                         else:
-                                            await websocket.send_text(json.dumps({"action": "error", "message": "Aucun résultat trouvé."}))
+                                            needs_current_track = [
+                                                "sauvegarder_titre_actuel", 
+                                                "creer_playlist_avec_titre", 
+                                                "ajouter_titre_playlist_existante",
+                                                "jouer_style_actuel"
+                                            ]
+                                            
+                                            if nom_outil in needs_current_track and not player_state.current_track:
+                                                resultat_execution = {"status": "error", "message": "Aucune musique en cours de lecture. Demande à l'utilisateur de lancer un titre d'abord."}
+                                            
+                                            else:
+                                                current_vid = player_state.current_track['videoId'] if player_state.current_track else None
+                                                
+                                                if nom_outil == "sauvegarder_titre_actuel":
+                                                    await ytmusic_service.rate_song(current_vid, 'LIKE')
+                                                
+                                                elif nom_outil == "creer_playlist_avec_titre":
+                                                    nom_playlist = args.get("nom_playlist")
+                                                    await ytmusic_service.create_playlist(nom_playlist, [current_vid])
+                                                
+                                                elif nom_outil == "ajouter_titre_playlist_existante":
+                                                    nom_cible = args.get("nom_playlist")
+                                                    playlists = await ytmusic_service.get_user_playlists()
+                                                    
+                                                    if not playlists:
+                                                        resultat_execution = {"status": "error", "message": "DÉFAUT D'AUTHENTIFICATION : Impossible de lire la bibliothèque. Le fichier browser_read.json a expiré."}
+                                                    else:
+                                                        meilleur_score = 0
+                                                        id_trouve = None
+                                                        for p in playlists:
+                                                            score = fuzz.partial_ratio(nom_cible.lower(), p['title'].lower())
+                                                            if score > meilleur_score:
+                                                                meilleur_score = score
+                                                                id_trouve = p['playlistId']
+                                                                
+                                                        if meilleur_score > 60 and id_trouve:
+                                                            await ytmusic_service.add_to_playlist(id_trouve, [current_vid])
+                                                        else:
+                                                            resultat_execution = {"status": "error", "message": f"Playlist {nom_cible} introuvable."}
+
+                                                elif nom_outil == "jouer_playlist_personnelle":
+                                                    nom_cible = args.get("nom_playlist")
+                                                    playlists = await ytmusic_service.get_user_playlists()
+                                                    
+                                                    if not playlists:
+                                                        resultat_execution = {"status": "error", "message": "DÉFAUT D'AUTHENTIFICATION : Impossible de lire la bibliothèque. Le fichier browser_read.json a expiré."}
+                                                    else:
+                                                        meilleur_score = 0
+                                                        id_trouve = None
+                                                        for p in playlists:
+                                                            score = fuzz.partial_ratio(nom_cible.lower(), p['title'].lower())
+                                                            if score > meilleur_score:
+                                                                meilleur_score = score
+                                                                id_trouve = p['playlistId']
+                                                                
+                                                        if meilleur_score > 60 and id_trouve:
+                                                            await safe_send_text(json.dumps({"action": "loading"}))
+                                                            radio_data = await ytmusic_service.generate_radio(playlist_id=id_trouve)
+                                                            tracks = radio_data.get("tracks", [])
+                                                            if tracks:
+                                                                current = tracks[0]
+                                                                queue = tracks[1:]
+                                                                artist_name = current.get('artists', [{'name': 'Inconnu'}])[0]['name']
+                                                                thumbnails = current.get('thumbnail', current.get('thumbnails', [{'url': ''}]))
+                                                                thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
+                                                                
+                                                                player_state.play_now(current, queue)
+                                                                next_title = player_state.queue[0]['title'] if player_state.queue else "Fin de la liste"
+                                                                
+                                                                payload = {
+                                                                    "action": "play_music",
+                                                                    "video_id": current['videoId'],
+                                                                    "title": current['title'],
+                                                                    "artist": artist_name,
+                                                                    "thumbnail": thumbnail_url,
+                                                                    "next_title": next_title
+                                                                }
+                                                                await safe_send_text(json.dumps(payload))
+                                                            else:
+                                                                resultat_execution = {"status": "error", "message": "Cette playlist est vide."}
+                                                        else:
+                                                            resultat_execution = {"status": "error", "message": f"Ta playlist {nom_cible} est introuvable."}
+
+                                                elif nom_outil == "jouer_style_actuel":
+                                                    await safe_send_text(json.dumps({"action": "loading"}))
+                                                    radio_data = await ytmusic_service.generate_radio(video_id=current_vid)
+                                                    tracks = radio_data.get("tracks", [])
+                                                    
+                                                    if len(tracks) > 1:
+                                                        current = tracks[1]
+                                                        queue = tracks[2:]
+                                                        artist_name = current.get('artists', [{'name': 'Inconnu'}])[0]['name']
+                                                        thumbnails = current.get('thumbnail', current.get('thumbnails', [{'url': ''}]))
+                                                        thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
+                                                        
+                                                        player_state.play_now(current, queue)
+                                                        next_title = player_state.queue[0]['title'] if player_state.queue else "Fin de la liste"
+                                                        
+                                                        payload = {
+                                                            "action": "play_music",
+                                                            "video_id": current['videoId'],
+                                                            "title": current['title'],
+                                                            "artist": artist_name,
+                                                            "thumbnail": thumbnail_url,
+                                                            "next_title": next_title
+                                                        }
+                                                        await safe_send_text(json.dumps(payload))
+                                                    else:
+                                                        resultat_execution = {"status": "error", "message": "Impossible de générer une radio à partir de ce titre."}
+
+                                                elif nom_outil == "lister_playlists_personnelles":
+                                                    playlists = await ytmusic_service.get_user_playlists(limit=15)
+                                                    
+                                                    if playlists:
+                                                        noms_playlists = [p.get('title', 'Inconnu') for p in playlists]
+                                                        resultat_execution = {
+                                                            "status": "success",
+                                                            "message": "Voici les playlists de l'utilisateur.",
+                                                            "playlists_disponibles": noms_playlists
+                                                        }
+                                                    else:
+                                                        resultat_execution = {
+                                                            "status": "error",
+                                                            "message": "DÉFAUT D'AUTHENTIFICATION : Aucune playlist trouvée. Le fichier browser_read.json a expiré. Informe immédiatement l'utilisateur."
+                                                        }
+                                                        
+                                    except Exception as e:
+                                        print(f"Erreur d'exécution de l'outil {nom_outil}: {e}")
+                                        erreur_str = str(e)
+                                        if "401" in erreur_str or "Unauthorized" in erreur_str or "403" in erreur_str:
+                                            resultat_execution = {
+                                                "status": "error",
+                                                "message": "DÉFAUT D'AUTHENTIFICATION : Le cookie d'écriture (browser_write.json) a expiré. Informe immédiatement l'utilisateur."
+                                            }
+                                        else:
+                                            resultat_execution = {"status": "error", "message": erreur_str}
+
+                                    tool_responses_list.append(
+                                        types.FunctionResponse(
+                                            id=function_call.id,
+                                            name=nom_outil,
+                                            response=resultat_execution
+                                        )
+                                    )
+                                
+                                if tool_responses_list:
+                                    reponse_outil = types.LiveClientToolResponse(
+                                        function_responses=tool_responses_list
+                                    )
+                                    try:
+                                        await session.send(input=reponse_outil)
+                                    except Exception:
+                                        pass
+                                    
+                                    reponse_fin_tour = types.LiveClientContent(
+                                        turn_complete=True
+                                    )
+                                    try:
+                                        await session.send(input=reponse_fin_tour)
+                                    except Exception:
+                                        pass
+
+                        # FIN DE BOUCLE ASYNCHRONE : 
+                        # Le SDK a terminé de recevoir le flux audio de l'IA pour ce tour.
+                        # On envoie explicitement le signal au frontend pour fermer le micro.
+                        await safe_send_text(json.dumps({"action": "turn_complete"}))
                                             
                 except Exception as e:
-                    print(f"Erreur de réception : {e}")
+                    print(f"Erreur de réception Gemini : {e}")
+                    traceback.print_exc()
 
             async with asyncio.TaskGroup() as tg:
                 tg.create_task(receive_from_client())
@@ -224,40 +429,30 @@ async def websocket_endpoint(websocket: WebSocket):
 # ROUTES API RECHERCHE ET LECTURE
 # ==========================================
 
-class SearchRequest(BaseModel):
-    query: str
-    action: str = "play_now"
-
 class PlaySpecificRequest(BaseModel):
     video_id: str
     action: str = "play_now"
 
+class RefillRequest(BaseModel):
+    last_video_id: str
+
 @app.get("/api/search/live")
 async def api_search_live(q: str):
-    """
-    Rôle : Renvoie rapidement les 5 meilleurs résultats pour l'autocomplétion.
-    Cette route évite de déclencher la lourde fonction get_watch_playlist 
-    et se contente d'extraire les métadonnées de surface.
-    """
     if not q:
         return []
-    
     try:
-        search_results = await asyncio.to_thread(ytmusic.search, q, filter="songs", limit=5)
+        search_results = await ytmusic_service.search_live(q, limit=5)
         formatted_results = []
-        
         for res in search_results:
             artist_name = res.get('artists', [{'name': 'Inconnu'}])[0]['name']
             thumbnails = res.get('thumbnails', [{'url': ''}])
             thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
-            
             formatted_results.append({
                 "video_id": res['videoId'],
                 "title": res['title'],
                 "artist": artist_name,
                 "thumbnail": thumbnail_url
             })
-            
         return formatted_results
     except Exception as e:
         print(f"Erreur recherche live : {e}")
@@ -265,14 +460,9 @@ async def api_search_live(q: str):
 
 @app.post("/api/play_specific")
 async def api_play_specific(request: PlaySpecificRequest):
-    """
-    Rôle : Initialise la file d'attente et la lecture à partir d'un identifiant exact.
-    Appelée lorsque l'utilisateur clique sur un résultat de l'autocomplétion.
-    """
     try:
-        watch_playlist = await asyncio.to_thread(ytmusic.get_watch_playlist, videoId=request.video_id)
-        tracks = watch_playlist.get("tracks", [])
-        
+        radio_data = await ytmusic_service.generate_radio(video_id=request.video_id)
+        tracks = radio_data.get("tracks", [])
         if not tracks:
             return {"error": "Impossible de générer la lecture pour ce titre."}
             
@@ -283,15 +473,11 @@ async def api_play_specific(request: PlaySpecificRequest):
         thumbnails = current.get('thumbnail', [{'url': ''}])
         thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
         
-        if request.action == "play_now":
-            player_state.play_now(current, queue)
-            next_title = queue[0]['title'] if queue else "Fin de la liste"
-        else:
-            player_state.add_to_queue(current, queue)
-            next_title = player_state.manual_queue[0]['title'] if player_state.manual_queue else (queue[0]['title'] if queue else "Fin de la liste")
+        player_state.play_now(current, queue)
+        next_title = player_state.queue[0]['title'] if player_state.queue else "Fin de la liste"
             
         return {
-            "action": "play_music" if request.action == "play_now" else "queue_music",
+            "action": "play_music",
             "video_id": current['videoId'],
             "title": current['title'],
             "artist": artist_name,
@@ -302,22 +488,19 @@ async def api_play_specific(request: PlaySpecificRequest):
         print(f"Erreur play_specific : {e}")
         return {"error": "Erreur lors du traitement du titre."}
 
-@app.post("/api/search")
-async def api_search(request: SearchRequest):
-    # Consolidé par souci de rétrocompatibilité si besoin
-    search_results = await asyncio.to_thread(ytmusic.search, request.query, filter="songs", limit=1)
-    if not search_results:
-        return {"error": "Aucun résultat trouvé"}
-        
-    best_track = search_results[0]
-    video_id = best_track['videoId']
-    
-    # Redirige la logique vers la nouvelle fonction spécialisée
-    fake_request = PlaySpecificRequest(video_id=video_id, action=request.action)
-    return await api_play_specific(fake_request)
+@app.post("/api/player/refill")
+async def api_player_refill(request: RefillRequest):
+    try:
+        radio_data = await ytmusic_service.generate_radio(video_id=request.last_video_id)
+        tracks = radio_data.get("tracks", [])
+        player_state.append_radio_tracks(tracks)
+        return {"status": "success", "added": len(tracks) - 1}
+    except Exception as e:
+        print(f"Erreur refill : {e}")
+        return {"error": "Impossible de recharger la radio."}
 
 # ==========================================
-# ROUTES API LECTEUR
+# ROUTES API LECTEUR ET STREAMING
 # ==========================================
 
 @app.get("/player/next")
@@ -327,12 +510,7 @@ async def player_next():
         return {"error": "File d'attente vide"}
     
     artist_name = track.get('artists', [{'name': 'Inconnu'}])[0]['name']
-    
-    next_title = "Fin de la liste"
-    if player_state.manual_queue:
-        next_title = player_state.manual_queue[0]['title']
-    elif player_state.autoplay_queue:
-        next_title = player_state.autoplay_queue[0]['title']
+    next_title = player_state.queue[0]['title'] if player_state.queue else "Fin de la liste"
         
     thumbnails = track.get('thumbnail', track.get('thumbnails', [{'url': ''}]))
     thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
@@ -342,7 +520,8 @@ async def player_next():
         "title": track['title'],
         "artist": artist_name,
         "thumbnail": thumbnail_url,
-        "next_title": next_title
+        "next_title": next_title,
+        "remaining_queue_length": len(player_state.queue)
     }
 
 @app.get("/player/prev")
@@ -352,12 +531,7 @@ async def player_prev():
         return {"error": "Pas d'historique"}
     
     artist_name = track.get('artists', [{'name': 'Inconnu'}])[0]['name']
-    
-    next_title = "Fin de la liste"
-    if player_state.manual_queue:
-        next_title = player_state.manual_queue[0]['title']
-    elif player_state.autoplay_queue:
-        next_title = player_state.autoplay_queue[0]['title']
+    next_title = player_state.queue[0]['title'] if player_state.queue else "Fin de la liste"
         
     thumbnails = track.get('thumbnail', track.get('thumbnails', [{'url': ''}]))
     thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
@@ -367,7 +541,8 @@ async def player_prev():
         "title": track['title'],
         "artist": artist_name,
         "thumbnail": thumbnail_url,
-        "next_title": next_title
+        "next_title": next_title,
+        "remaining_queue_length": len(player_state.queue)
     }
 
 @app.get("/stream/{video_id}")
