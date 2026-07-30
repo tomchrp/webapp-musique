@@ -1,64 +1,43 @@
 """
 ==============================================================================
 Chemin : backend/test_auto_playlists.py
-Utilité : Script d'automatisation et de diagnostic de la bibliothèque musicale.
-          Il vérifie la capacité du compte à extraire dynamiquement ses propres 
-          données sans aucun identifiant codé en dur (Playlists et Titres Likés).
-          Il sert à valider le parsing de la librairie ytmusicapi.
+Utilité : Script de validation unitaire.
+          Combine deux opérations d'écriture consécutives : la création d'une 
+          toute nouvelle playlist privée, suivie de l'injection immédiate d'un 
+          titre à l'intérieur de celle-ci dès sa création.
 ==============================================================================
 """
-from ytmusicapi import YTMusic
-from pathlib import Path
-import traceback
 
-def auditer_bibliotheque_automatique():
+from pathlib import Path
+from ytmusicapi import YTMusic
+
+def tester_creation_et_ajout():
     """
     Descriptif :
-    1. Initialise la connexion via l'empreinte navigateur (browser.json).
-    2. Lance une requête automatique pour récupérer les playlists de la bibliothèque.
-    3. Lance une seconde requête automatique pour récupérer les "Titres Likés".
-       Cette double vérification permet de savoir si un éventuel échec est ciblé 
-       (uniquement les playlists) ou global (toute la bibliothèque est illisible).
-    4. Affiche les résultats dans la console.
+    Demande à l'API de créer une nouvelle entité de type playlist. ytmusicapi 
+    permet de passer directement une liste de video_ids lors de la création pour 
+    l'initialiser avec du contenu. Affiche l'identifiant unique de la nouvelle playlist.
     """
-    browser_path = Path(__file__).parent / "browser.json"
-    print(f"Initialisation du client avec {browser_path}...\n")
+    chemin_auth = Path(__file__).parent / "browser.json"
     
     try:
-        ytmusic = YTMusic(str(browser_path))
+        client = YTMusic(str(chemin_auth))
+        video_id = "kOn-HdEg6AQ"
+        titre_playlist = "Test API Gemini - Auto Creation"
+        description = "Playlist générée automatiquement par le script de test unitaire."
+        
+        print(f"Création de la playlist '{titre_playlist}' avec le titre {video_id}...")
+        nouveau_playlist_id = client.create_playlist(
+            title=titre_playlist,
+            description=description,
+            privacy_status="PRIVATE",
+            video_ids=[video_id]
+        )
+        
+        print(f"Succès ! Nouvelle playlist créée avec l'ID : {nouveau_playlist_id}")
+            
     except Exception as e:
-        print("Erreur critique d'initialisation :", e)
-        return
-
-    # --- TEST 1 : Récupération automatique des playlists ---
-    print("=== TEST 1 : Playlists de la bibliothèque ===")
-    try:
-        playlists = ytmusic.get_library_playlists(limit=100)
-        if not playlists:
-            print("-> ÉCHEC : La requête automatique a renvoyé 0 playlist.")
-        else:
-            print(f"-> SUCCÈS : {len(playlists)} playlists trouvées automatiquement.")
-            # Affichage des 3 premières pour confirmer la lecture
-            for i, p in enumerate(playlists[:3], 1):
-                print(f"   {i}. {p.get('title')} (ID: {p.get('playlistId')})")
-    except Exception as e:
-        print("-> ERREUR LORS DU PARSING DES PLAYLISTS :")
-        print(e)
-
-    print("\n=== TEST 2 : Titres Likés (Vérification de l'accès bibliothèque) ===")
-    try:
-        # get_liked_songs tape sur un autre point d'accès de la bibliothèque
-        liked = ytmusic.get_liked_songs(limit=5)
-        pistes = liked.get('tracks', [])
-        if not pistes:
-            print("-> ÉCHEC : Aucun titre liké trouvé ou impossible à lire.")
-        else:
-            print(f"-> SUCCÈS : Récupération automatique validée (Ex: '{pistes[0].get('title')}').")
-    except Exception as e:
-        print("-> ERREUR LORS DU PARSING DES TITRES LIKÉS :")
-        print(e)
-    
-    print("\nFin de l'audit automatique.")
+        print(f"Erreur critique lors de l'exécution : {e}")
 
 if __name__ == "__main__":
-    auditer_bibliotheque_automatique()
+    tester_creation_et_ajout()

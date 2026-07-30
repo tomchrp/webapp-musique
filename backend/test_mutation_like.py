@@ -1,48 +1,37 @@
 """
 ==============================================================================
 Chemin : backend/test_mutation_like.py
-Utilité : Script de test unitaire pour isoler et valider la capacité du 
-          compte à effectuer des requêtes de mutation (écriture) sur Google. 
-          Tente d'ajouter un "J'aime" à un titre spécifique.
+Utilité : Script de validation unitaire.
+          Vérifie la capacité du client YTMusic authentifié via browser.json 
+          à modifier l'état d'appréciation d'un titre spécifique (Like).
+          Permet de confirmer que les droits d'écriture (mutations) sont actifs.
 ==============================================================================
 """
-from ytmusicapi import YTMusic
-from pathlib import Path
-import traceback
 
-def tester_like_musique(video_id: str):
+from pathlib import Path
+from ytmusicapi import YTMusic
+
+def tester_like_titre():
     """
     Descriptif :
-    Initialise la connexion via l'empreinte navigateur (browser.json).
-    Fait appel à la fonction 'rate_song' avec l'action 'LIKE'.
-    Capture et affiche l'erreur HTTP exacte si les jetons CSRF ou 
-    l'identifiant de visiteur sont invalides ou expirés.
+    Initialise le client API et envoie une requête pour liker le titre 'Beat It'.
+    Affiche la réponse brute de l'API pour faciliter le débogage en cas d'erreur HTTP 400/401.
     """
-    browser_path = Path(__file__).parent / "browser.json"
-    print(f"Initialisation du client avec {browser_path}...\n")
+    chemin_auth = Path(__file__).parent / "browser.json"
+    print(f"Chargement de l'authentification depuis : {chemin_auth}")
     
     try:
-        ytmusic = YTMusic(str(browser_path))
-    except Exception as e:
-        print("Erreur critique d'initialisation :", e)
-        return
-
-    print(f"Tentative de Like sur la vidéo ID : {video_id}...")
-    try:
-        # Appel de la méthode de mutation
-        resultat = ytmusic.rate_song(video_id, 'LIKE')
-        print("\n=== SUCCÈS ===")
-        print(f"Réponse des serveurs Google : {resultat}")
-        print("L'action d'écriture a été validée par ton compte.")
-        print("=================")
+        client = YTMusic(str(chemin_auth))
+        video_id = "kOn-HdEg6AQ"  # Beat It
+        
+        print(f"Tentative de like sur la vidéo ID : {video_id}...")
+        reponse = client.rate_song(video_id, 'LIKE')
+        
+        print("Résultat de l'opération :")
+        print(reponse)
         
     except Exception as e:
-        print("\n=== ÉCHEC DE L'ÉCRITURE (HTTP 401) ===")
-        print("Ton fichier browser.json est valide pour la lecture, mais rejeté pour l'écriture.")
-        print("Erreur brute :")
-        print(e)
+        print(f"Erreur critique lors de l'exécution : {e}")
 
 if __name__ == "__main__":
-    # ID de test (Kavinsky - Nightcall par exemple). Tu peux le remplacer.
-    ID_VIDEO_A_TESTER = "MV_3Dpw-BRY" 
-    tester_like_musique(ID_VIDEO_A_TESTER)
+    tester_like_titre()

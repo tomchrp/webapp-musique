@@ -2,10 +2,10 @@
 ==============================================================================
 Chemin : backend/services/ytmusic_service.py
 Utilité : Couche d'abstraction (Service) pour interagir avec l'API YouTube Music.
-          Implémente une architecture à double client (CQRS) pour contourner
-          les restrictions de sécurité de Google :
-          - client_read : Dédié à l'exploration (utilise browser_read.json)
-          - client_write : Dédié aux mutations (utilise browser_write.json)
+          Suite aux limitations du parseur d'environnement, l'authentification 
+          repose de nouveau sur un fichier physique unique 'browser.json'. 
+          Ce module charge ce fichier pour instancier un client API unique,
+          garantissant la synchronisation de la session pour la lecture et l'écriture.
 ==============================================================================
 """
 
@@ -17,86 +17,101 @@ class YTMusicService:
     def __init__(self):
         """
         Descriptif :
-        Initialise deux connexions distinctes pour séparer les droits de lecture
-        et d'écriture. Charge les fichiers browser_read.json et browser_write.json.
+        Initialise une connexion unique à l'API YouTube Music.
+        Construit le chemin absolu vers 'browser.json' situé à la racine du 
+        dossier backend. Interrompt l'exécution de manière explicite si le fichier 
+        est manquant afin d'éviter les erreurs de requêtes indéchiffrables plus tard.
         """
-        backend_dir = Path(__file__).parent.parent
-        read_path = backend_dir / "browser_read.json"
-        write_path = backend_dir / "browser_write.json"
+        chemin_fichier_auth = Path(__file__).parent.parent / "browser.json"
         
-        print(f"[Service YTMusic] Initialisation du client READ ({read_path.name})...")
-        self.client_read = YTMusic(str(read_path))
-        
-        print(f"[Service YTMusic] Initialisation du client WRITE ({write_path.name})...")
-        self.client_write = YTMusic(str(write_path))
+        if not chemin_fichier_auth.exists():
+            raise FileNotFoundError(
+                "Fichier d'authentification introuvable. Assurez-vous d'avoir "
+                "placé votre fichier 'browser.json' dans le répertoire 'backend'."
+            )
+            
+        print(f"[Service YTMusic] Initialisation du client unique unifié via {chemin_fichier_auth.name}...")
+        self.client = YTMusic(str(chemin_fichier_auth))
 
     # ==========================================
-    # OPÉRATIONS DE LECTURE (Utilise client_read)
+    # OPÉRATIONS DE LECTURE
     # ==========================================
 
     async def get_user_playlists(self, limit: int = 100):
         """
         Descriptif :
-        Récupère la liste des playlists de la bibliothèque personnelle de l'utilisateur.
+        Délègue la récupération des playlists de l'utilisateur à un thread séparé.
+        L'utilisation de asyncio.to_thread est requise car ytmusicapi effectue 
+        des requêtes HTTP synchrones (via la librairie requests) qui bloqueraient 
+        la boucle d'événements principale de FastAPI.
         """
-        return await asyncio.to_thread(self.client_read.get_library_playlists, limit=limit)
+        return await asyncio.to_thread(self.client.get_library_playlists, limit=limit)
 
     async def get_playlist_details(self, playlist_id: str):
         """
         Descriptif :
-        Récupère les détails et les pistes d'une playlist spécifique.
+        Récupère l'intégralité des métadonnées et la liste des pistes associées 
+        à un identifiant de playlist spécifique.
         """
-        return await asyncio.to_thread(self.client_read.get_playlist, playlist_id)
+        return await asyncio.to_thread(self.client.get_playlist, playlist_id)
 
     async def generate_radio(self, video_id: str = None, playlist_id: str = None):
         """
         Descriptif :
-        Génère une file d'attente continue (radio) basée sur une graine (titre ou playlist).
+        Génère une file d'attente continue (radio algorithmique) basée soit sur 
+        un titre unique (video_id), soit sur une playlist (playlist_id). Si aucun 
+        paramètre n'est fourni, retourne une structure vide par sécurité.
         """
         if video_id:
-            return await asyncio.to_thread(self.client_read.get_watch_playlist, videoId=video_id, radio=True)
+            return await asyncio.to_thread(self.client.get_watch_playlist, videoId=video_id, radio=True)
         elif playlist_id:
-            return await asyncio.to_thread(self.client_read.get_watch_playlist, playlistId=playlist_id, radio=True)
+            return await asyncio.to_thread(self.client.get_watch_playlist, playlistId=playlist_id, radio=True)
         return {"tracks": []}
 
     async def search_live(self, query: str, limit: int = 5):
         """
         Descriptif :
-        Recherche textuelle optimisée pour l'autocomplétion du client web (frontend).
+        Effectue une recherche rapide ciblée uniquement sur les chansons.
+        Cette fonction est optimisée pour fournir les résultats de l'autocomplétion 
+        dans la barre de recherche du frontend.
         """
-        return await asyncio.to_thread(self.client_read.search, query, filter="songs", limit=limit)
+        return await asyncio.to_thread(self.client.search, query, filter="songs", limit=limit)
 
     async def search(self, query: str, filter: str = None, limit: int = 1):
         """
         Descriptif :
-        Encapsulation de la recherche générale utilisée par l'outil gerer_musique
-        de l'IA pour trouver des titres ou des playlists publiques.
+        Exécute une recherche générale avec possibilité de filtrer par type 
+        (chansons, playlists, artistes). Utilisée principalement par les outils 
+        d'intelligence artificielle pour résoudre les requêtes vocales.
         """
-        return await asyncio.to_thread(self.client_read.search, query, filter=filter, limit=limit)
+        return await asyncio.to_thread(self.client.search, query, filter=filter, limit=limit)
 
     # ==========================================
-    # OPÉRATIONS D'ÉCRITURE (Utilise client_write)
+    # OPÉRATIONS D'ÉCRITURE
     # ==========================================
 
     async def rate_song(self, video_id: str, rating: str = 'LIKE'):
         """
         Descriptif :
-        Modifie le statut "J'aime" d'un titre dans la bibliothèque.
+        Modifie l'état d'appréciation d'un titre pour l'utilisateur authentifié.
+        Utilisé pour ajouter rapidement le titre en cours de lecture aux favoris.
         """
-        return await asyncio.to_thread(self.client_write.rate_song, video_id, rating)
+        return await asyncio.to_thread(self.client.rate_song, video_id, rating)
 
     async def create_playlist(self, title: str, video_ids: list):
         """
         Descriptif :
-        Crée une nouvelle playlist privée contenant les vidéos spécifiées.
+        Génère une nouvelle playlist avec un statut privé par défaut et y 
+        insère la liste des identifiants vidéo fournis en paramètres.
         """
-        return await asyncio.to_thread(self.client_write.create_playlist, title, "", "PRIVATE", video_ids)
+        return await asyncio.to_thread(self.client.create_playlist, title, "", "PRIVATE", video_ids)
 
     async def add_to_playlist(self, playlist_id: str, video_ids: list):
         """
         Descriptif :
-        Ajoute des vidéos à une playlist existante.
+        Insère une liste de vidéos dans une playlist préexistante appartenant 
+        à l'utilisateur.
         """
-        return await asyncio.to_thread(self.client_write.add_playlist_items, playlist_id, video_ids)
+        return await asyncio.to_thread(self.client.add_playlist_items, playlist_id, video_ids)
 
 ytmusic_service = YTMusicService()

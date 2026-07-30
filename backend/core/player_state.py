@@ -4,22 +4,35 @@ Chemin : backend/core/player_state.py
 Utilité : Gestionnaire de l'état de la file d'attente (State Management).
           Remplace la liste d'attente basique par une structure capable de 
           gérer l'injection de sessions "Radio" sans créer de doublons.
+          Note : Ce module implémente un Singleton. Il maintient l'état global 
+          de la lecture pour le serveur.
 ==============================================================================
 """
 
 class PlayerState:
     def __init__(self):
+        """
+        Descriptif :
+        Initialise le gestionnaire d'état de la lecture musicale.
+        Crée les listes nécessaires pour stocker l'historique des morceaux joués,
+        la file d'attente à venir, et un registre unique (Set) des identifiants 
+        pour bloquer les répétitions non désirées lors de l'ajout de radios.
+        """
         self.history = []
         self.current_track = None
         self.queue = []
-        # Historique des identifiants pour éviter de jouer deux fois le même titre dans une radio
         self.played_ids = set() 
 
     def play_now(self, track: dict, subsequent_tracks: list):
         """
         Descriptif :
-        Écrase la file d'attente actuelle pour jouer un nouveau titre immédiatement.
-        Enregistre la piste actuelle dans l'historique avant de la remplacer.
+        Écrase la file d'attente actuelle pour forcer la lecture immédiate d'un nouveau titre.
+        Enregistre la piste actuellement en cours (si elle existe) dans l'historique 
+        avant de procéder au remplacement. Purge la file d'attente des doublons potentiels.
+        
+        Args:
+            track (dict): Les métadonnées du titre à jouer immédiatement.
+            subsequent_tracks (list): La liste des titres suivants (la nouvelle file d'attente).
         """
         if self.current_track:
             self.history.append(self.current_track)
@@ -27,35 +40,39 @@ class PlayerState:
         self.current_track = track
         self.played_ids.add(track.get('videoId'))
         
-        # Filtre de sécurité : retire le titre en cours s'il est présent dans la nouvelle liste
         self.queue = [t for t in subsequent_tracks if t.get('videoId') != track.get('videoId')]
 
     def append_radio_tracks(self, radio_tracks: list):
         """
         Descriptif :
-        Logique de "Refill" intelligent (Phase 1 de la roadmap). 
-        Prend une liste de titres issus d'une requête Radio, ignore la position 0 
-        (qui est toujours la graine/seed ayant servi à générer la radio), et 
-        ajoute uniquement les titres qui n'ont pas encore été joués dans cette session.
+        Étend la file d'attente de manière transparente. Analyse une liste de titres 
+        renvoyée par l'algorithme radio de YouTube, rejette le titre de base (index 0) 
+        et filtre tous les identifiants déjà présents dans l'historique de la session 
+        pour garantir une écoute sans répétition.
+        
+        Args:
+            radio_tracks (list): La liste des recommandations générées par l'API.
         """
         if not radio_tracks or len(radio_tracks) < 2:
             return
 
-        # On ignore le premier élément (index 0) car c'est le morceau de référence
         new_tracks = radio_tracks[1:]
         
         for track in new_tracks:
             vid_id = track.get('videoId')
             if vid_id and vid_id not in self.played_ids:
                 self.queue.append(track)
-                # On pré-enregistre l'ID pour éviter qu'un futur refill ne le réinjecte
                 self.played_ids.add(vid_id)
 
     def next_track(self):
         """
         Descriptif :
-        Passe au titre suivant. Transfère le titre actuel dans l'historique 
-        et dépile le premier élément de la file d'attente.
+        Avance la lecture d'un cran. Archive le titre actuel dans la liste de l'historique 
+        et extrait le premier élément disponible dans la file d'attente pour le définir 
+        comme nouvelle piste active.
+        
+        Returns:
+            dict ou None: Le nouveau titre à jouer, ou None si la file est vide.
         """
         if self.current_track:
             self.history.append(self.current_track)
@@ -72,8 +89,12 @@ class PlayerState:
     def prev_track(self):
         """
         Descriptif :
-        Recule d'un titre. Réinsère le titre actuel au début de la file 
-        d'attente et récupère le dernier élément de l'historique.
+        Retourne au titre précédent. Annule l'action précédente en réinsérant le titre 
+        actuel au sommet de la file d'attente, et restaure le dernier élément de 
+        l'historique comme piste active.
+        
+        Returns:
+            dict ou None: Le titre précédent, ou None si l'historique est vide.
         """
         if not self.history:
             return None
@@ -84,5 +105,4 @@ class PlayerState:
         self.current_track = self.history.pop()
         return self.current_track
 
-# Instance globale à utiliser dans les routes FastAPI
 player_state = PlayerState()

@@ -5,10 +5,10 @@ Utilité : Point d'entrée principal de l'API FastAPI.
           - Maintient le tunnel WebSocket avec Gemini Live.
           - Implémente le routage des groupes d'outils (A, B, C) vers le frontend.
           - Capte les signaux d'interruption vocale (barge-in).
-          - Déduit la fin du tour de l'IA (turn_complete) par la sortie de la 
-            boucle asynchrone du SDK, permettant au frontend de déclencher
-            la fermeture du micro pour les actions du Groupe B.
-          - Utilise des fonctions d'envoi sécurisées pour éviter les crashs.
+          - Déduit la fin du tour de l'IA (turn_complete) pour la gestion UI.
+Mise à jour : Les retours d'erreurs d'authentification destinés à l'IA ciblent 
+              désormais explicitement le fichier browser.json afin de fournir 
+              un retour précis à l'utilisateur en cas d'expiration de session.
 ==============================================================================
 """
 
@@ -126,8 +126,9 @@ async def websocket_endpoint(websocket: WebSocket):
     Descriptif détaillé :
     Gère la boucle d'interaction de l'agent avec tolérance aux pannes réseau.
     Intègre les fonctions safe_send_text et safe_send_bytes pour éviter les crashs.
-    L'ordre 'turn_complete' est désormais envoyé à l'extérieur de la sous-boucle 
-    de lecture, une fois que l'itérateur du SDK indique que l'IA a fini de parler.
+    L'ordre 'turn_complete' est envoyé au frontend une fois que l'itérateur du SDK 
+    indique que l'IA a fini de parler. Le traitement des appels d'outils est géré 
+    ici avec abstraction des erreurs serveurs pour le LLM.
     """
     await websocket.accept()
 
@@ -270,7 +271,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                                     playlists = await ytmusic_service.get_user_playlists()
                                                     
                                                     if not playlists:
-                                                        resultat_execution = {"status": "error", "message": "DÉFAUT D'AUTHENTIFICATION : Impossible de lire la bibliothèque. Le fichier browser_read.json a expiré."}
+                                                        resultat_execution = {"status": "error", "message": "DÉFAUT D'AUTHENTIFICATION : Impossible de lire la bibliothèque. Le fichier browser.json a expiré."}
                                                     else:
                                                         meilleur_score = 0
                                                         id_trouve = None
@@ -290,7 +291,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                                     playlists = await ytmusic_service.get_user_playlists()
                                                     
                                                     if not playlists:
-                                                        resultat_execution = {"status": "error", "message": "DÉFAUT D'AUTHENTIFICATION : Impossible de lire la bibliothèque. Le fichier browser_read.json a expiré."}
+                                                        resultat_execution = {"status": "error", "message": "DÉFAUT D'AUTHENTIFICATION : Impossible de lire la bibliothèque. Le fichier browser.json a expiré."}
                                                     else:
                                                         meilleur_score = 0
                                                         id_trouve = None
@@ -368,7 +369,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                                     else:
                                                         resultat_execution = {
                                                             "status": "error",
-                                                            "message": "DÉFAUT D'AUTHENTIFICATION : Aucune playlist trouvée. Le fichier browser_read.json a expiré. Informe immédiatement l'utilisateur."
+                                                            "message": "DÉFAUT D'AUTHENTIFICATION : Aucune playlist trouvée. Le fichier browser.json a expiré. Informe immédiatement l'utilisateur."
                                                         }
                                                         
                                     except Exception as e:
@@ -377,7 +378,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                         if "401" in erreur_str or "Unauthorized" in erreur_str or "403" in erreur_str:
                                             resultat_execution = {
                                                 "status": "error",
-                                                "message": "DÉFAUT D'AUTHENTIFICATION : Le cookie d'écriture (browser_write.json) a expiré. Informe immédiatement l'utilisateur."
+                                                "message": "DÉFAUT D'AUTHENTIFICATION : Les droits d'écriture ont expiré ou sont invalides. Informe immédiatement l'utilisateur."
                                             }
                                         else:
                                             resultat_execution = {"status": "error", "message": erreur_str}
@@ -407,9 +408,6 @@ async def websocket_endpoint(websocket: WebSocket):
                                     except Exception:
                                         pass
 
-                        # FIN DE BOUCLE ASYNCHRONE : 
-                        # Le SDK a terminé de recevoir le flux audio de l'IA pour ce tour.
-                        # On envoie explicitement le signal au frontend pour fermer le micro.
                         await safe_send_text(json.dumps({"action": "turn_complete"}))
                                             
                 except Exception as e:
@@ -426,7 +424,8 @@ async def websocket_endpoint(websocket: WebSocket):
         traceback.print_exc()
 
 # ==========================================
-# ROUTES API RECHERCHE ET LECTURE
+# Les routes de streaming restent inchangées 
+# par rapport à l'étape précédente.
 # ==========================================
 
 class PlaySpecificRequest(BaseModel):
@@ -460,6 +459,13 @@ async def api_search_live(q: str):
 
 @app.post("/api/play_specific")
 async def api_play_specific(request: PlaySpecificRequest):
+    """
+    Descriptif :
+    Prend un identifiant de vidéo spécifique (souvent issu de la barre de recherche), 
+    génère une radio associée via le service unifié YTMusic, met à jour l'état global 
+    du lecteur (player_state) avec cette nouvelle file d'attente, et renvoie les 
+    métadonnées au frontend pour déclencher la lecture immédiate.
+    """
     try:
         radio_data = await ytmusic_service.generate_radio(video_id=request.video_id)
         tracks = radio_data.get("tracks", [])
@@ -498,10 +504,6 @@ async def api_player_refill(request: RefillRequest):
     except Exception as e:
         print(f"Erreur refill : {e}")
         return {"error": "Impossible de recharger la radio."}
-
-# ==========================================
-# ROUTES API LECTEUR ET STREAMING
-# ==========================================
 
 @app.get("/player/next")
 async def player_next():
@@ -547,6 +549,15 @@ async def player_prev():
 
 @app.get("/stream/{video_id}")
 async def stream_audio(video_id: str, request: Request):
+    """
+    Descriptif :
+    Route critique gérant le proxying du flux audio depuis les serveurs de YouTube 
+    vers le client web. Utilise la bibliothèque yt_dlp pour extraire l'URL directe 
+    du média audio de la meilleure qualité possible. Ouvre ensuite un flux HTTP 
+    asynchrone (httpx) pour relayer les octets vers le lecteur HTML5 du frontend 
+    en temps réel. Gère les requêtes partielles (Range headers) pour permettre à 
+    l'utilisateur de se déplacer librement sur la barre de progression.
+    """
     ydl_opts = {
         'format': 'bestaudio/best',
         'quiet': True,

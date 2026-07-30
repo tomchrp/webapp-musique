@@ -1,57 +1,39 @@
 """
 ==============================================================================
 Chemin : backend/test_playlists.py
-Utilité : Script de test unitaire pour vérifier la bonne communication entre 
-          la librairie ytmusicapi, l'empreinte navigateur (browser.json) et la 
-          bibliothèque personnelle de l'utilisateur sur YouTube Music. 
-Mise à jour : Remplacement total de l'authentification OAuth (qui retourne 
-              une erreur 400) par l'authentification par navigateur (headers).
+Utilité : Script de validation unitaire.
+          Vérifie la capacité du client à lire les données privées du compte.
+          Récupère et affiche la liste des playlists de la bibliothèque pour 
+          confirmer que la session simule bien l'utilisateur authentifié.
 ==============================================================================
 """
-from ytmusicapi import YTMusic
+
 from pathlib import Path
-import traceback
+from ytmusicapi import YTMusic
 
-def tester_recuperation_playlists():
+def tester_lecture_playlists():
     """
-    Descriptif détaillé de la fonction :
-    1. Construit dynamiquement le chemin vers le fichier 'browser.json' situé 
-       dans le même dossier que ce script.
-    2. Initialise le client YTMusic en utilisant ce fichier d'empreinte 
-       navigateur pour contourner définitivement le blocage OAuth de Google.
-    3. Fait appel à la fonction 'get_library_playlists' pour interroger 
-       les serveurs et récupérer jusqu'à 100 playlists.
-    4. Parcourt les résultats pour extraire et afficher le titre et l'ID 
-       de chaque playlist personnelle trouvée.
+    Descriptif :
+    Interroge la bibliothèque de l'utilisateur pour récupérer ses playlists.
+    Itère sur les résultats pour afficher le titre et l'identifiant de chacune,
+    ce qui est crucial pour le ciblage lors des ajouts de titres ultérieurs.
     """
-    browser_path = Path(__file__).parent / "browser.json"
-    print(f"Initialisation du client avec {browser_path}...")
+    chemin_auth = Path(__file__).parent / "browser.json"
     
     try:
-        ytmusic = YTMusic(str(browser_path))
-    except Exception as e:
-        print("Erreur d'initialisation YTMusic :")
-        print(e)
-        return
-    
-    print("Récupération des playlists en cours...\n")
-    try:
-        playlists = ytmusic.get_library_playlists(limit=100)
+        client = YTMusic(str(chemin_auth))
         
-        if not playlists:
-            print("Aucune playlist trouvée dans cette bibliothèque.")
-            return
-
-        print(f"=== {len(playlists)} Playlists trouvées ===")
-        for index, playlist in enumerate(playlists, start=1):
-            titre = playlist.get('title', 'Titre inconnu')
-            playlist_id = playlist.get('playlistId', 'ID inconnu')
-            print(f"{index}. {titre} (ID: {playlist_id})")
-        print("================================")
+        print("Récupération de la bibliothèque de playlists...")
+        playlists = client.get_library_playlists(limit=50)
         
+        print(f"{len(playlists)} playlists trouvées :")
+        for p in playlists:
+            titre = p.get('title', 'Sans titre')
+            id_playlist = p.get('playlistId', 'ID inconnu')
+            print(f"- {titre} (ID: {id_playlist})")
+            
     except Exception as e:
-        print("Erreur lors de la récupération des playlists :")
-        traceback.print_exc()
+        print(f"Erreur critique lors de l'exécution : {e}")
 
 if __name__ == "__main__":
-    tester_recuperation_playlists()
+    tester_lecture_playlists()
