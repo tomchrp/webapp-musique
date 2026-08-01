@@ -1,19 +1,17 @@
 /*
 ==============================================================================
-Fichier : frontend/app.js
+Chemin : frontend/app.js
 Utilité : Script principal de l'interface client (Frontend).
-          Gère les interactions UI, la communication WebSocket avec l'agent IA,
-          et le contrôle du lecteur audio HTML5.
-Mise à jour : Intégration globale des icônes SVG. Ajout du contrôle de volume
-              avec mémorisation de l'état. Mise en place du volet d'ajout aux
-              playlists avec vérification d'état. Système de radio de secours 
-              en fin de playlist pour maintenir l'écoute continue.
+Mise à jour : Centralisation de la logique de rafraîchissement visuel.
+              - Création de la fonction `refreshActiveDrawer()` pour recharger
+                intelligemment le volet en fonction de l'état en cours (liste,
+                détail, ou découverte).
+              - L'interface se met désormais à jour visuellement en temps réel
+                lors de la réception du signal WebSocket 'library_updated' et 
+                lors d'un ajout manuel via le second volet.
 ==============================================================================
 */
 
-// ==========================================
-// CONSTANTES DES ICÔNES SVG VECTORIELLES
-// ==========================================
 const SVG_PLAY = `<svg class="svg-icon-large" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
 const SVG_PAUSE = `<svg class="svg-icon-large" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
 const SVG_ADD = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>`;
@@ -43,7 +41,6 @@ const timeCurrent = document.getElementById('time-current');
 const timeTotal = document.getElementById('time-total');
 const toastContainer = document.getElementById('toast-container');
 
-// Éléments du DOM pour le volet de bibliothèque
 const btnLibrary = document.getElementById('btn-library');
 const libraryDrawer = document.getElementById('library-drawer');
 const btnDrawerClose = document.getElementById('btn-drawer-close');
@@ -55,7 +52,7 @@ const btnDrawerPlay = document.getElementById('btn-drawer-play');
 const tabPlaylists = document.getElementById('tab-playlists');
 const tabDiscovery = document.getElementById('tab-discovery');
 const discoveryContent = document.getElementById('discovery-content');
-let cachedListenAgain = null;
+const btnDrawerRefresh = document.getElementById('btn-drawer-refresh');
 
 let ws = null;
 let captureContext = null;
@@ -72,16 +69,13 @@ let animationFrameId = null;
 let searchTimeout = null;
 let isRefilling = false;
 
-// État du volet et Cache Mémoire
 let isDrawerOpen = false;
 let currentDrawerState = 'list';
 let currentPlaylistId = null;
 let cachedPlaylists = null;
 let cachedPlaylistDetails = {};
+let cachedListenAgain = null;
 
-// ==========================================
-// OUTILS UI : Toasts, Formateurs et Skeletons
-// ==========================================
 function showToast(message) {
     toastContainer.textContent = message;
     toastContainer.classList.remove('hidden');
@@ -116,10 +110,6 @@ function removeLoadingState() {
     trackCover.classList.remove("skeleton-cover");
 }
 
-// ==========================================
-// TRANSITIONS AUDIO DOUCES & VOLUME
-// ==========================================
-
 const btnVolume = document.getElementById('btn-volume');
 const volumeSlider = document.getElementById('volume-slider');
 
@@ -136,19 +126,12 @@ volumeSlider.addEventListener('input', (e) => {
     }
 });
 
-// Cache le slider si on clique ailleurs
 document.addEventListener('click', (e) => {
     if (!btnVolume.contains(e.target) && !volumeSlider.contains(e.target)) {
         volumeSlider.classList.add('hidden');
     }
 });
 
-/**
- * Descriptif :
- * Effectue un fondu sortant de l'audio jusqu'au silence, puis met en pause,
- * avant de restaurer la valeur du volume en cache pour être prêt pour 
- * la lecture du morceau suivant sans perte du paramétrage utilisateur.
- */
 function fadeOut(audio, duration = 400) {
     return new Promise(resolve => {
         if (!audio || audio.paused) return resolve();
@@ -168,11 +151,6 @@ function fadeOut(audio, duration = 400) {
     });
 }
 
-/**
- * Descriptif :
- * Commence à jouer un fichier depuis un volume 0 et l'augmente progressivement
- * jusqu'à atteindre la limite définie par le slider de volume de l'utilisateur.
- */
 function fadeIn(audio, duration = 400) {
     if (!audio) return;
     const targetVolume = parseFloat(document.getElementById('volume-slider').value) || 1;
@@ -195,9 +173,6 @@ function fadeIn(audio, duration = 400) {
     }, 50);
 }
 
-// ==========================================
-// RECHERCHE TEXTUELLE AUTOCOMPLÉTÉÉ
-// ==========================================
 searchInput.addEventListener('input', (e) => {
     clearTimeout(searchTimeout);
     const query = e.target.value.trim();
@@ -207,7 +182,7 @@ searchInput.addEventListener('input', (e) => {
     }
     searchTimeout = setTimeout(async () => {
         try {
-            const response = await fetch(`/api/search/live?q=${encodeURIComponent(query)}`);
+            const response = await fetch(`/api/search/live?q=${encodeURIComponent(query)}&t=${Date.now()}`);
             const results = await response.json();
             searchResults.innerHTML = '';
             if (results.length > 0) {
@@ -268,9 +243,6 @@ async function playSpecificTrack(videoId) {
     }
 }
 
-// ==========================================
-// INTERACTION VOCALE & CONTRÔLE UI GLOBAL
-// ==========================================
 toggleBtn.addEventListener('click', async () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
         stopConversation();
@@ -311,11 +283,11 @@ async function startConversation() {
                     const message = JSON.parse(event.data);
 
                     if (message.action === "library_updated") {
+                        // Invalidation des variables en mémoire
                         cachedPlaylists = null;
                         cachedPlaylistDetails = {};
-                        if (isDrawerOpen && currentDrawerState === 'list') {
-                            loadPlaylists();
-                        }
+                        // NOUVEAU : On ordonne à la vue active de se redessiner
+                        refreshActiveDrawer();
                     }
                     else if (message.action === "loading") {
                         showLoadingState();
@@ -415,9 +387,6 @@ function playAudio(arrayBuffer) {
     nextPlayTime += audioBuffer.duration;
 }
 
-// ==========================================
-// GESTION DU LECTEUR ET DE LA PROGRESSION
-// ==========================================
 function setupMusicPlayerEvents() {
     if (!musicPlayer) return;
     musicPlayer.ontimeupdate = () => {
@@ -442,6 +411,8 @@ function playMusic(trackData) {
     statusText.textContent = "Lecture en cours";
     toggleBtn.className = "fab-btn btn-disconnected";
     removeLoadingState();
+
+    cachedListenAgain = null;
 
     progressBar.value = 0;
     timeCurrent.textContent = "0:00";
@@ -472,11 +443,6 @@ function playMusic(trackData) {
     btnPlayPause.innerHTML = SVG_PAUSE;
 }
 
-/**
- * Descriptif :
- * Demande au backend d'étendre la file d'attente à partir du dernier
- * morceau joué. Retourne vrai en cas de succès, faux sinon.
- */
 async function triggerRefill(videoId) {
     if (isRefilling) return false;
     isRefilling = true;
@@ -500,16 +466,10 @@ async function triggerRefill(videoId) {
     }
 }
 
-/**
- * Descriptif :
- * Passe au morceau suivant de la file d'attente. Si la liste est vide,
- * intercepte l'erreur pour déclencher silencieusement une radio de secours
- * basée sur le titre venant de se terminer.
- */
 async function playNextTrack() {
     stopConversation();
     try {
-        const response = await fetch('/player/next');
+        const response = await fetch(`/player/next?t=${Date.now()}`);
         const data = await response.json();
 
         if (data && !data.error) {
@@ -518,14 +478,13 @@ async function playNextTrack() {
                 triggerRefill(data.video_id);
             }
         } else {
-            // Radio de secours
             if (musicPlayer && musicPlayer.src) {
                 const currentVideoId = musicPlayer.src.split('/').pop();
                 if (currentVideoId) {
                     showToast("Génération d'une radio...");
                     const success = await triggerRefill(currentVideoId);
                     if (success) {
-                        const retryResponse = await fetch('/player/next');
+                        const retryResponse = await fetch(`/player/next?t=${Date.now()}`);
                         const retryData = await retryResponse.json();
                         if (retryData && !retryData.error) {
                             playMusic(retryData);
@@ -546,7 +505,7 @@ async function playPrevTrack() {
         return;
     }
     try {
-        const response = await fetch('/player/prev');
+        const response = await fetch(`/player/prev?t=${Date.now()}`);
         const data = await response.json();
         if (data && !data.error) {
             playMusic(data);
@@ -605,10 +564,6 @@ btnPlayPause.addEventListener('click', () => {
     }
 });
 
-// ==========================================
-// GESTION DU VOLET DE BIBLIOTHÈQUE ET CACHE
-// ==========================================
-
 function openDrawer() {
     isDrawerOpen = true;
     libraryDrawer.classList.remove('hidden');
@@ -618,7 +573,6 @@ function openDrawer() {
     btnDrawerBack.classList.add('hidden');
     drawerActions.classList.add('hidden');
 
-    // Vérifie quel onglet était actif pour restaurer l'état
     if (tabDiscovery.classList.contains('active')) {
         currentDrawerState = 'discovery';
         libraryContent.classList.add('hidden');
@@ -636,6 +590,33 @@ function closeDrawer() {
     isDrawerOpen = false;
     libraryDrawer.classList.add('hidden');
 }
+
+/**
+ * Descriptif :
+ * Fonction maîtresse garantissant que le volet affiché (s'il est ouvert)
+ * reflète toujours les données fraîchement téléchargées après une 
+ * purge des caches (manuelle ou via IA).
+ */
+function refreshActiveDrawer() {
+    if (!isDrawerOpen) return;
+
+    if (currentDrawerState === 'list') {
+        loadPlaylists();
+    } else if (currentDrawerState === 'discovery') {
+        loadListenAgain();
+    } else if (currentDrawerState === 'detail') {
+        if (currentPlaylistId) {
+            loadPlaylistDetails(currentPlaylistId, drawerTitle.textContent);
+        }
+    }
+}
+
+btnDrawerRefresh.addEventListener('click', () => {
+    cachedPlaylists = null;
+    cachedListenAgain = null;
+    cachedPlaylistDetails = {};
+    refreshActiveDrawer();
+});
 
 function renderSkeletonList() {
     libraryContent.innerHTML = '';
@@ -697,7 +678,7 @@ async function loadPlaylists() {
     renderSkeletonList();
 
     try {
-        const response = await fetch('/api/playlists');
+        const response = await fetch(`/api/playlists?t=${Date.now()}`);
         cachedPlaylists = await response.json();
         renderPlaylistsList(cachedPlaylists);
     } catch (e) {
@@ -756,7 +737,7 @@ async function loadPlaylistDetails(playlistId, title) {
     renderSkeletonList();
 
     try {
-        const response = await fetch(`/api/playlists/${playlistId}`);
+        const response = await fetch(`/api/playlists/${playlistId}?t=${Date.now()}`);
         const data = await response.json();
         cachedPlaylistDetails[playlistId] = data;
         renderPlaylistTracks(data);
@@ -765,10 +746,6 @@ async function loadPlaylistDetails(playlistId, title) {
         console.error("Erreur chargement détails playlist :", e);
     }
 }
-
-// ==========================================
-// ÉCOUTEURS D'ÉVÉNEMENTS DU VOLET
-// ==========================================
 
 btnLibrary.addEventListener('click', () => {
     if (isDrawerOpen) {
@@ -825,10 +802,6 @@ btnDrawerPlay.addEventListener('click', async () => {
     }
 });
 
-// ==========================================
-// GESTION DES ONGLETS ET "LISTEN AGAIN"
-// ==========================================
-
 tabPlaylists.addEventListener('click', () => {
     tabPlaylists.classList.add('active');
     tabDiscovery.classList.remove('active');
@@ -853,13 +826,6 @@ tabDiscovery.addEventListener('click', () => {
     loadListenAgain();
 });
 
-/**
- * Descriptif :
- * Fonction asynchrone pour lire un titre spécifique au sein d'une playlist.
- * Envoie simultanément l'identifiant de la playlist et l'identifiant de la vidéo 
- * au backend. Cela permet de démarrer la lecture sur le bon titre tout en 
- * conservant le contexte strict de la playlist (désactivation de la radio infinie).
- */
 async function playPlaylistTrack(playlistId, videoId) {
     stopConversation();
     showLoadingState();
@@ -895,7 +861,7 @@ async function loadListenAgain() {
     discoveryContent.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted); width: 100%;">Génération de la grille...</div>';
 
     try {
-        const response = await fetch('/api/home/listen-again');
+        const response = await fetch(`/api/home/listen-again?t=${Date.now()}`);
         cachedListenAgain = await response.json();
         renderListenAgain(cachedListenAgain);
     } catch (e) {
@@ -934,9 +900,6 @@ function renderListenAgain(items) {
     });
 }
 
-// ==========================================
-// DRAWER D'AJOUT À LA PLAYLIST
-// ==========================================
 const btnAddPlaylist = document.getElementById('btn-add-playlist');
 const playlistAddDrawer = document.getElementById('playlist-add-drawer');
 const btnCloseAddDrawer = document.getElementById('btn-close-add-drawer');
@@ -948,7 +911,6 @@ btnAddPlaylist.addEventListener('click', async () => {
         return;
     }
 
-    // Le bouton affiche le SVG de coche une fois ajouté. On empêche un double ajout via son chemin SVG.
     if (btnAddPlaylist.innerHTML.includes("16.17")) return;
 
     playlistAddDrawer.classList.remove('hidden');
@@ -957,7 +919,7 @@ btnAddPlaylist.addEventListener('click', async () => {
     let playlists = cachedPlaylists;
     if (!playlists) {
         try {
-            const res = await fetch('/api/playlists');
+            const res = await fetch(`/api/playlists?t=${Date.now()}`);
             playlists = await res.json();
             cachedPlaylists = playlists;
         } catch (e) {
@@ -992,7 +954,12 @@ btnAddPlaylist.addEventListener('click', async () => {
                 if (!data.error) {
                     showToast("Ajouté avec succès !");
                     btnAddPlaylist.innerHTML = SVG_CHECK;
+
+                    // NOUVEAU : Invalidation et redessin forcé 
                     cachedPlaylistDetails[p.playlistId] = null;
+                    cachedPlaylists = null;
+                    refreshActiveDrawer();
+
                 } else {
                     showToast(data.error);
                 }

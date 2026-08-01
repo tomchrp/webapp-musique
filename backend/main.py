@@ -2,14 +2,12 @@
 ==============================================================================
 Chemin : backend/main.py
 Utilité : Point d'entrée principal de l'API FastAPI.
-          - Maintient le tunnel WebSocket avec Gemini Live.
-          - Implémente le routage des groupes d'outils (A, B, C) vers le frontend.
-          - Gère la communication asynchrone pour la lecture audio et l'UI.
-Mise à jour : Ajout du signal WebSocket 'library_updated' suite aux actions 
-              de mutation de playlists par l'IA. Création des routes REST 
-              ('/api/playlists', '/api/playlists/{playlist_id}' et 
-              '/api/play_playlist') pour permettre à l'interface client de 
-              récupérer et lire le contenu de la bibliothèque personnelle.
+Mise à jour : Correction critique de la synchronisation d'état (State Management).
+              - Création de la tâche asynchrone `notify_library_updated` pour 
+                absorber la latence de cohérence éventuelle des serveurs Google (3s) 
+                sans bloquer la boucle d'événements de l'agent IA.
+              - Ajout du déclencheur de rafraîchissement sur l'outil de 
+                sauvegarde des favoris (Likes) qui était jusqu'ici ignoré.
 ==============================================================================
 """
 
@@ -29,7 +27,6 @@ from google import genai
 from google.genai import types
 from thefuzz import fuzz
 
-# Importations absolues depuis la racine 'backend'
 from backend.services.ytmusic_service import ytmusic_service
 from backend.core.player_state import player_state
 
@@ -123,14 +120,6 @@ CONFIG = types.LiveConnectConfig(
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """
-    Descriptif détaillé :
-    Gère la boucle d'interaction de l'agent avec tolérance aux pannes réseau.
-    Intègre les fonctions safe_send_text et safe_send_bytes pour éviter les crashs.
-    L'ordre 'turn_complete' est envoyé au frontend une fois que l'itérateur du SDK 
-    indique que l'IA a fini de parler. Émet un événement 'library_updated' au client
-    lorsque l'IA modifie une playlist, permettant au frontend de se rafraîchir.
-    """
     await websocket.accept()
 
     async def safe_send_text(text: str):
@@ -144,6 +133,18 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.send_bytes(data)
         except Exception:
             pass 
+
+    async def notify_library_updated(delai=3):
+        """
+        Descriptif :
+        Tâche asynchrone exécutée en arrière-plan.
+        Attend un délai spécifique avant d'envoyer le signal de mise à jour au client.
+        Cela permet aux serveurs de Google (qui utilisent une base de données à 
+        cohérence éventuelle) de synchroniser leurs données en interne avant que 
+        le frontend ne tente de purger son cache et de rafraîchir son affichage.
+        """
+        await asyncio.sleep(delai)
+        await safe_send_text(json.dumps({"action": "library_updated"}))
 
     try:
         async with client.aio.live.connect(model=MODEL, config=CONFIG) as session:
@@ -262,12 +263,12 @@ async def websocket_endpoint(websocket: WebSocket):
                                                 
                                                 if nom_outil == "sauvegarder_titre_actuel":
                                                     await ytmusic_service.rate_song(current_vid, 'LIKE')
+                                                    asyncio.create_task(notify_library_updated())
                                                 
                                                 elif nom_outil == "creer_playlist_avec_titre":
                                                     nom_playlist = args.get("nom_playlist")
                                                     await ytmusic_service.create_playlist(nom_playlist, [current_vid])
-                                                    # Signal de mise à jour pour le frontend
-                                                    await safe_send_text(json.dumps({"action": "library_updated"}))
+                                                    asyncio.create_task(notify_library_updated())
                                                 
                                                 elif nom_outil == "ajouter_titre_playlist_existante":
                                                     nom_cible = args.get("nom_playlist")
@@ -276,7 +277,6 @@ async def websocket_endpoint(websocket: WebSocket):
                                                     if not playlists:
                                                         resultat_execution = {"status": "error", "message": "DÉFAUT D'AUTHENTIFICATION : Impossible de lire la bibliothèque."}
                                                     else:
-                                                        # Comparaison stricte (sans thefuzz) mais insensible à la casse
                                                         id_trouve = None
                                                         for p in playlists:
                                                             if p['title'].strip().lower() == nom_cible.strip().lower():
@@ -285,9 +285,8 @@ async def websocket_endpoint(websocket: WebSocket):
                                                                 
                                                         if id_trouve:
                                                             await ytmusic_service.add_to_playlist(id_trouve, [current_vid])
-                                                            await safe_send_text(json.dumps({"action": "library_updated"}))
+                                                            asyncio.create_task(notify_library_updated())
                                                         else:
-                                                            # L'erreur explicite force l'IA à lancer l'autre outil
                                                             resultat_execution = {"status": "error", "message": f"ÉCHEC : La playlist '{nom_cible}' est introuvable. Utilise l'outil 'lister_playlists_personnelles' pour trouver le nom exact puis recommence."}
 
                                                 elif nom_outil == "jouer_playlist_personnelle":
@@ -295,7 +294,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                                     playlists = await ytmusic_service.get_user_playlists()
                                                     
                                                     if not playlists:
-                                                        resultat_execution = {"status": "error", "message": "DÉFAUT D'AUTHENTIFICATION : Impossible de lire la bibliothèque. Le fichier browser.json a expiré."}
+                                                        resultat_execution = {"status": "error", "message": "DÉFAUT D'AUTHENTIFICATION : Impossible de lire la bibliothèque."}
                                                     else:
                                                         meilleur_score = 0
                                                         id_trouve = None
@@ -307,7 +306,6 @@ async def websocket_endpoint(websocket: WebSocket):
                                                                 
                                                         if meilleur_score > 60 and id_trouve:
                                                             await safe_send_text(json.dumps({"action": "loading"}))
-                                                            # NOUVEAU : On force radio=False ici aussi
                                                             radio_data = await ytmusic_service.generate_radio(playlist_id=id_trouve, radio=False)
                                                             tracks = radio_data.get("tracks", [])
                                                             if tracks:
@@ -362,19 +360,17 @@ async def websocket_endpoint(websocket: WebSocket):
                                                         resultat_execution = {"status": "error", "message": "Impossible de générer une radio à partir de ce titre."}
 
                                                 elif nom_outil == "lister_playlists_personnelles":
-                                                    playlists = await ytmusic_service.get_user_playlists(limit=15)
-                                                    
+                                                    playlists = await ytmusic_service.get_user_playlists(limit=25)
                                                     if playlists:
-                                                        noms_playlists = [p.get('title', 'Inconnu') for p in playlists]
+                                                        noms_playlists = ", ".join([f"'{p.get('title', 'Inconnu')}'" for p in playlists])
                                                         resultat_execution = {
                                                             "status": "success",
-                                                            "message": "Voici les playlists de l'utilisateur.",
-                                                            "playlists_disponibles": noms_playlists
+                                                            "message": f"Voici les playlists actuelles : {noms_playlists}. (Attention : Si tu viens de créer une playlist, informe l'utilisateur que les serveurs de Google mettent parfois 30 secondes à la rendre visible)."
                                                         }
                                                     else:
                                                         resultat_execution = {
                                                             "status": "error",
-                                                            "message": "DÉFAUT D'AUTHENTIFICATION : Aucune playlist trouvée. Le fichier browser.json a expiré. Informe immédiatement l'utilisateur."
+                                                            "message": "DÉFAUT D'AUTHENTIFICATION : Aucune playlist trouvée. La connexion au compte a échoué."
                                                         }
                                                         
                                     except Exception as e:
@@ -383,7 +379,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                         if "401" in erreur_str or "Unauthorized" in erreur_str or "403" in erreur_str:
                                             resultat_execution = {
                                                 "status": "error",
-                                                "message": "DÉFAUT D'AUTHENTIFICATION : Les droits d'écriture ont expiré ou sont invalides. Informe immédiatement l'utilisateur."
+                                                "message": "DÉFAUT D'AUTHENTIFICATION : Les droits de l'application ont expiré ou sont invalides. Informe l'utilisateur."
                                             }
                                         else:
                                             resultat_execution = {"status": "error", "message": erreur_str}
@@ -441,16 +437,10 @@ class RefillRequest(BaseModel):
 
 class PlayPlaylistRequest(BaseModel):
     playlist_id: str
-    video_id: str = None # NOUVEAU : Optionnel pour démarrer au milieu d'une playlist
+    video_id: str = None 
 
 @app.get("/api/playlists")
 async def api_get_playlists():
-    """
-    Descriptif :
-    Récupère la bibliothèque de playlists de l'utilisateur.
-    Formate la réponse pour ne renvoyer que les métadonnées utiles au frontend 
-    (ID, titre, nombre de titres, miniature) afin d'alléger la charge réseau.
-    """
     try:
         playlists_brutes = await ytmusic_service.get_user_playlists(limit=50)
         playlists_formatees = []
@@ -470,16 +460,11 @@ async def api_get_playlists():
 
 @app.get("/api/playlists/{playlist_id}")
 async def api_get_playlist_details(playlist_id: str):
-    """
-    Descriptif :
-    Récupère les détails complets d'une playlist spécifique.
-    """
     try:
         details = await ytmusic_service.get_playlist_details(playlist_id)
         tracks_formatees = []
         for track in details.get('tracks', []):
             artist_name = track.get('artists', [{'name': 'Inconnu'}])[0]['name']
-            # NOUVEAU : Sécurité pour gérer les formats 'thumbnail' (Mixes) et 'thumbnails'
             thumbnails = track.get('thumbnail', track.get('thumbnails', [{'url': ''}]))
             thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
             tracks_formatees.append({
@@ -500,11 +485,6 @@ async def api_get_playlist_details(playlist_id: str):
 
 @app.post("/api/play_playlist")
 async def api_play_playlist(request: PlayPlaylistRequest):
-    """
-    Descriptif :
-    Initialise la lecture stricte d'une playlist complète sans autocomplétion.
-    Gère le démarrage au milieu de la playlist si un video_id est fourni.
-    """
     try:
         radio_data = await ytmusic_service.generate_radio(
             playlist_id=request.playlist_id, 
@@ -515,7 +495,6 @@ async def api_play_playlist(request: PlayPlaylistRequest):
         if not tracks:
             return {"error": "Cette playlist semble vide ou illisible."}
             
-        # NOUVEAU : On cherche l'index du titre cliqué pour démarrer la file au bon endroit
         current_index = 0
         if request.video_id:
             for i, t in enumerate(tracks):
@@ -569,13 +548,6 @@ async def api_search_live(q: str):
 
 @app.post("/api/play_specific")
 async def api_play_specific(request: PlaySpecificRequest):
-    """
-    Descriptif :
-    Prend un identifiant de vidéo spécifique (souvent issu de la barre de recherche), 
-    génère une radio associée via le service unifié YTMusic, met à jour l'état global 
-    du lecteur (player_state) avec cette nouvelle file d'attente, et renvoie les 
-    métadonnées au frontend pour déclencher la lecture immédiate.
-    """
     try:
         radio_data = await ytmusic_service.generate_radio(video_id=request.video_id)
         tracks = radio_data.get("tracks", [])
@@ -609,9 +581,6 @@ class AddTrackRequest(BaseModel):
 
 @app.post("/api/playlists/{playlist_id}/add")
 async def api_add_to_playlist(playlist_id: str, request: AddTrackRequest):
-    """
-    Descriptif : Ajoute un titre spécifique à une playlist existante via l'UI.
-    """
     try:
         await ytmusic_service.add_to_playlist(playlist_id, [request.video_id])
         return {"status": "success"}
@@ -640,7 +609,6 @@ async def api_get_listen_again():
             thumb_url = thumbnails[-1]['url'] if thumbnails else ""
             formatted.append({
                 "title": item.get('title', 'Sans titre'),
-                # NOUVEAU : On vérifie 'videoId' EN PREMIER pour garantir la lecture du titre exact
                 "type": "video" if 'videoId' in item else ("playlist" if 'playlistId' in item else "other"),
                 "id": item.get('videoId') or item.get('playlistId') or item.get('browseId'),
                 "thumbnail": thumb_url,
@@ -650,6 +618,7 @@ async def api_get_listen_again():
     except Exception as e:
         print(f"Erreur api_get_listen_again : {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de la récupération des écoutes récentes.")
+
 # ==========================================
 # ROUTES API LECTEUR ET STREAMING
 # ==========================================
@@ -698,15 +667,6 @@ async def player_prev():
 
 @app.get("/stream/{video_id}")
 async def stream_audio(video_id: str, request: Request):
-    """
-    Descriptif :
-    Route critique gérant le proxying du flux audio depuis les serveurs de YouTube 
-    vers le client web. Utilise la bibliothèque yt_dlp pour extraire l'URL directe 
-    du média audio de la meilleure qualité possible. Ouvre ensuite un flux HTTP 
-    asynchrone (httpx) pour relayer les octets vers le lecteur HTML5 du frontend 
-    en temps réel. Gère les requêtes partielles (Range headers) pour permettre à 
-    l'utilisateur de se déplacer librement sur la barre de progression.
-    """
     ydl_opts = {
         'format': 'bestaudio/best',
         'quiet': True,

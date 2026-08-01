@@ -1,2 +1,2 @@
-### A CONFIRMER
-- utiliser cookies d'un autre navigateur sur lequel on s'est connecté dans le fichier browser pour que Google ne les refresh pas.
+Setup : Se connecter sur son compte YT Music sur Mozilla Firefox et créer une clé API sur Google AI Studio
+Run :  uvicorn backend.main:app --reload
