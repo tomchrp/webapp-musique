@@ -50,23 +50,37 @@ class YTMusicService:
     async def get_playlist_details(self, playlist_id: str):
         """
         Descriptif :
-        Récupère l'intégralité des métadonnées et la liste des pistes associées 
-        à un identifiant de playlist spécifique.
+        Récupère l'intégralité des métadonnées et la liste des pistes associées.
+        Intègre une sécurité pour les "Mix" (ID commençant par RD) qui nécessitent 
+        une méthode d'extraction différente des playlists standards.
         """
+        if playlist_id.startswith('RD'):
+            data = await asyncio.to_thread(self.client.get_watch_playlist, playlistId=playlist_id)
+            return {
+                'title': 'Mix',
+                'trackCount': len(data.get('tracks', [])),
+                'tracks': data.get('tracks', [])
+            }
         return await asyncio.to_thread(self.client.get_playlist, playlist_id)
 
-    async def generate_radio(self, video_id: str = None, playlist_id: str = None):
+    async def generate_radio(self, video_id: str = None, playlist_id: str = None, radio: bool = True):
         """
         Descriptif :
-        Génère une file d'attente continue (radio algorithmique) basée soit sur 
-        un titre unique (video_id), soit sur une playlist (playlist_id). Si aucun 
-        paramètre n'est fourni, retourne une structure vide par sécurité.
+        Génère une file d'attente continue ou lit strictement une playlist.
+        Accepte désormais la combinaison d'une playlist ET d'une vidéo de départ,
+        ainsi que la désactivation de l'autocomplétion (radio=False).
         """
+        kwargs = {}
         if video_id:
-            return await asyncio.to_thread(self.client.get_watch_playlist, videoId=video_id, radio=True)
-        elif playlist_id:
-            return await asyncio.to_thread(self.client.get_watch_playlist, playlistId=playlist_id, radio=True)
-        return {"tracks": []}
+            kwargs['videoId'] = video_id
+        if playlist_id:
+            kwargs['playlistId'] = playlist_id
+            
+        if not kwargs:
+            return {"tracks": []}
+            
+        kwargs['radio'] = radio
+        return await asyncio.to_thread(self.client.get_watch_playlist, **kwargs)
 
     async def search_live(self, query: str, limit: int = 5):
         """
@@ -114,4 +128,19 @@ class YTMusicService:
         """
         return await asyncio.to_thread(self.client.add_playlist_items, playlist_id, video_ids)
 
+    async def get_listen_again(self):
+        """
+        Descriptif :
+        Récupère la page d'accueil avec une limite très basse (pour la rapidité) 
+        et filtre uniquement la section "Listen again".
+        """
+        try:
+            home = await asyncio.to_thread(self.client.get_home, limit=3)
+            for row in home:
+                if row.get('title') == 'Listen again':
+                    return row.get('contents', [])
+            return []
+        except Exception as e:
+            print(f"Erreur get_listen_again : {e}")
+            return []
 ytmusic_service = YTMusicService()

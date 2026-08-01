@@ -1,12 +1,11 @@
 <!--
 ==============================================================================
-Fichier : frontend/index.html
-Description : 
-Ajout des éléments nécessaires pour la Phase 3 :
-1. Le conteneur de progression (.progress-container) avec un <input type="range"> 
-   pour la barre interactive, et deux spans pour l'affichage dynamique du temps.
-2. Le conteneur de toast (#toast-container) pour afficher les notifications 
-   éphémères de manière non intrusive lors de l'ajout à la file d'attente.
+Chemin : frontend/index.html
+Utilité : Structure principale de l'interface utilisateur (HTML5).
+          - L'en-tête intègre désormais le contrôle du volume à droite.
+          - Les emojis ont été remplacés par des balises SVG vectorielles.
+          - L'ancienne modale d'ajout aux playlists a été convertie en 
+            un second volet coulissant (Drawer) pour unifier le design.
 ==============================================================================
 -->
 <!DOCTYPE html>
@@ -22,31 +21,54 @@ Ajout des éléments nécessaires pour la Phase 3 :
 <body>
     <div id="background-blur"></div>
 
-    <!-- Notification visuelle (Toasts) -->
     <div id="toast-container" class="hidden"></div>
 
     <div class="app-container">
 
         <!-- Zone 1 : Utilitaires et Recherche -->
         <header class="top-zone">
+            <!-- Bouton Bibliothèque -->
+            <button id="btn-library" class="btn-icon header-icon" aria-label="Bibliothèque">
+                <svg class="svg-icon" viewBox="0 0 24 24">
+                    <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
+                </svg>
+            </button>
+
             <div class="search-wrapper">
                 <div class="search-bar">
-                    <input type="text" id="search-input" placeholder="Rechercher un titre, un artiste..."
-                        autocomplete="off">
+                    <input type="text" id="search-input" placeholder="Rechercher un titre..." autocomplete="off">
                 </div>
-                <!-- Dropdown pour les résultats en direct -->
                 <div id="search-results" class="search-results-dropdown hidden"></div>
+            </div>
+
+            <!-- Contrôle du volume déplacé dans l'en-tête -->
+            <div class="volume-control header-icon">
+                <button id="btn-volume" class="btn-icon" aria-label="Volume">
+                    <svg class="svg-icon" viewBox="0 0 24 24">
+                        <path
+                            d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                    </svg>
+                </button>
+                <input type="range" id="volume-slider" class="volume-slider hidden" min="0" max="1" step="0.05"
+                    value="1">
             </div>
         </header>
 
         <main class="player-zone hidden" id="player-container">
             <img id="track-cover" src="" alt="Pochette de l'album" class="hidden">
+
             <div class="track-info">
-                <h2 id="track-title">Titre</h2>
-                <h3 id="track-artist">Artiste</h3>
+                <div class="track-text">
+                    <h2 id="track-title">Titre</h2>
+                    <h3 id="track-artist">Artiste</h3>
+                </div>
+                <button id="btn-add-playlist" class="btn-icon" aria-label="Ajouter à une playlist">
+                    <svg class="svg-icon" viewBox="0 0 24 24">
+                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                    </svg>
+                </button>
             </div>
 
-            <!-- Barre de progression interactive -->
             <div class="progress-container">
                 <span id="time-current">0:00</span>
                 <input type="range" id="progress-bar" value="0" min="0" max="100" step="0.1">
@@ -54,9 +76,21 @@ Ajout des éléments nécessaires pour la Phase 3 :
             </div>
 
             <div class="player-controls">
-                <button id="btn-prev" class="btn-icon">|◄</button>
-                <button id="btn-play-pause" class="btn-icon btn-main">►</button>
-                <button id="btn-next" class="btn-icon">►|</button>
+                <button id="btn-prev" class="btn-icon" aria-label="Précédent">
+                    <svg class="svg-icon" viewBox="0 0 24 24">
+                        <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                    </svg>
+                </button>
+                <button id="btn-play-pause" class="btn-icon btn-main" aria-label="Lecture">
+                    <svg class="svg-icon-large" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z" />
+                    </svg>
+                </button>
+                <button id="btn-next" class="btn-icon" aria-label="Suivant">
+                    <svg class="svg-icon" viewBox="0 0 24 24">
+                        <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                    </svg>
+                </button>
             </div>
             <p id="next-track-info">À suivre : ...</p>
         </main>
@@ -67,6 +101,54 @@ Ajout des éléments nécessaires pour la Phase 3 :
                 <button id="toggle-btn" class="fab-btn btn-disconnected"></button>
             </div>
         </footer>
+
+        <!-- Volet 1 : Bibliothèque Principale -->
+        <div id="library-drawer" class="drawer hidden">
+            <div class="drawer-header">
+                <button id="btn-drawer-back" class="btn-icon hidden">
+                    <svg class="svg-icon" viewBox="0 0 24 24">
+                        <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+                    </svg>
+                </button>
+                <h2 id="drawer-title" class="hidden">Mes Playlists</h2>
+                <div class="drawer-tabs" id="drawer-tabs">
+                    <button id="tab-playlists" class="tab-btn active">Playlists</button>
+                    <button id="tab-discovery" class="tab-btn">Écoutés récemment</button>
+                </div>
+                <button id="btn-drawer-close" class="btn-icon">
+                    <svg class="svg-icon" viewBox="0 0 24 24">
+                        <path
+                            d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                    </svg>
+                </button>
+            </div>
+            <div class="drawer-actions hidden" id="drawer-actions">
+                <button id="btn-drawer-play" class="btn-play-all">
+                    <svg class="svg-icon-small" style="vertical-align: middle; margin-right: 5px;" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z" />
+                    </svg>
+                    Jouer la playlist
+                </button>
+            </div>
+            <div id="library-content" class="drawer-content"></div>
+            <div id="discovery-content" class="drawer-content hidden listen-again-grid"></div>
+        </div>
+
+        <!-- Volet 2 : Ajout à une playlist (Remplace l'ancienne modale) -->
+        <div id="playlist-add-drawer" class="drawer hidden" style="height: 60vh; z-index: 90;">
+            <div class="drawer-header">
+                <h2 style="flex: 1; text-align: center; margin: 0; font-size: 1.1rem;">Ajouter à une playlist</h2>
+                <button id="btn-close-add-drawer" class="btn-icon">
+                    <svg class="svg-icon" viewBox="0 0 24 24">
+                        <path
+                            d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                    </svg>
+                </button>
+            </div>
+            <div id="add-drawer-list" class="drawer-content" style="padding: 10px 20px;">
+                <!-- Rempli dynamiquement -->
+            </div>
+        </div>
 
     </div>
     <script src="app.js"></script>
