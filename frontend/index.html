@@ -2,11 +2,7 @@
 ==============================================================================
 Chemin : frontend/index.html
 Utilité : Structure principale de l'interface utilisateur (HTML5).
-Mise à jour : Ajout d'un bouton "Rafraîchir" dans l'en-tête du volet 
-              principal (library-drawer). Ce bouton est groupé avec le bouton 
-              de fermeture dans un conteneur flex pour forcer la 
-              synchronisation manuelle en cas de modification des playlists 
-              depuis un appareil externe.
+Mise à jour : Modification de la valeur par défaut du volume-slider à 0.5 (50%).
 ==============================================================================
 -->
 <!DOCTYPE html>
@@ -47,8 +43,8 @@ Mise à jour : Ajout d'un bouton "Rafraîchir" dans l'en-tête du volet
                             d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
                     </svg>
                 </button>
-                <input type="range" id="volume-slider" class="volume-slider hidden" min="0" max="1" step="0.05"
-                    value="1">
+                <input type="range" id="volume-slider" class="volume-slider hidden" min="0" max="1" step="0.01"
+                    value="0.5">
             </div>
         </header>
 
@@ -74,6 +70,12 @@ Mise à jour : Ajout d'un bouton "Rafraîchir" dans l'en-tête du volet
             </div>
 
             <div class="player-controls">
+                <button id="btn-restart-playlist" class="btn-icon" aria-label="Recommencer la session">
+                    <svg class="svg-icon" viewBox="0 0 24 24">
+                        <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z" />
+                    </svg>
+                </button>
+
                 <button id="btn-prev" class="btn-icon" aria-label="Précédent">
                     <svg class="svg-icon" viewBox="0 0 24 24">
                         <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
@@ -89,8 +91,15 @@ Mise à jour : Ajout d'un bouton "Rafraîchir" dans l'en-tête du volet
                         <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
                     </svg>
                 </button>
+
+                <button id="btn-skip-playlist" class="btn-icon" aria-label="Sauter la session">
+                    <svg class="svg-icon" viewBox="0 0 24 24">
+                        <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
+                    </svg>
+                </button>
             </div>
-            <p id="next-track-info">À suivre : ...</p>
+
+            <div id="queue-preview-container" class="queue-preview-list hidden"></div>
         </main>
 
         <footer class="fab-zone">
@@ -114,18 +123,11 @@ Mise à jour : Ajout d'un bouton "Rafraîchir" dans l'en-tête du volet
                     <button id="tab-discovery" class="tab-btn">Écoutés récemment</button>
                 </div>
 
-                <!-- NOUVEAU : Conteneur pour grouper le rafraîchissement et la fermeture -->
                 <div style="display: flex; gap: 10px;">
                     <button id="btn-drawer-refresh" class="btn-icon" aria-label="Rafraîchir">
                         <svg class="svg-icon" viewBox="0 0 24 24">
                             <path
                                 d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
-                        </svg>
-                    </button>
-                    <button id="btn-drawer-close" class="btn-icon" aria-label="Fermer">
-                        <svg class="svg-icon" viewBox="0 0 24 24">
-                            <path
-                                d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
                         </svg>
                     </button>
                 </div>
@@ -147,18 +149,20 @@ Mise à jour : Ajout d'un bouton "Rafraîchir" dans l'en-tête du volet
         <div id="playlist-add-drawer" class="drawer hidden" style="height: 60vh; z-index: 90;">
             <div class="drawer-header">
                 <h2 style="flex: 1; text-align: center; margin: 0; font-size: 1.1rem;">Ajouter à une playlist</h2>
-                <button id="btn-close-add-drawer" class="btn-icon">
-                    <svg class="svg-icon" viewBox="0 0 24 24">
-                        <path
-                            d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
-                    </svg>
-                </button>
             </div>
             <div id="add-drawer-list" class="drawer-content" style="padding: 10px 20px;"></div>
         </div>
 
+        <!-- Volet 3 : File d'attente (Queue Drawer) -->
+        <div id="queue-drawer" class="drawer hidden" style="height: 75vh; z-index: 85;">
+            <div class="drawer-header">
+                <h2 style="flex: 1; text-align: center; margin: 0; font-size: 1.2rem;">File d'attente</h2>
+            </div>
+            <div id="queue-content" class="drawer-content" style="padding: 0;"></div>
+        </div>
+
     </div>
-    <script src="app.js"></script>
+    <script type="module" src="js/main.js"></script>
 </body>
 
 </html>

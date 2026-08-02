@@ -1,9 +1,4 @@
-# Environnement virtuel
 venv/
-
-# Variables d'environnement (Sécurité critique)
 .env
-
-# Caches Python
 __pycache__/
 *.pyc
