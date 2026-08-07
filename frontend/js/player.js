@@ -1,16 +1,17 @@
 /*
 ==============================================================================
 Chemin : frontend/js/player.js
-Utilité : Moteur de lecture audio. Gère l'instance globale de l'élément Audio, 
-          le contrôle du volume, et interagit avec l'API pour récupérer 
-          les pistes ou manipuler la nouvelle file d'attente (Queue).
-Mise à jour : Application de la courbe cubique sur les fondus sonores.
+Utilité : Moteur de lecture audio. Gère le flux audio, les contrôles et 
+          l'alimentation de la file d'attente (Queue).
+Modifications :
+  - Suppression de l'injection par défaut du texte "Lecture en cours" dans 
+    fullPlayerStatus pour laisser l'espace vierge ou disponible pour Gemini.
 ==============================================================================
 */
 
 import * as DOM from './constants.js';
 import * as API from './api.js';
-import { showToast, formatTime, showLoadingState, removeLoadingState, closeAllDrawers, updateQueuePreview, renderQueueDrawer } from './ui.js';
+import { showToast, formatTime, showLoadingState, removeLoadingState, renderQueue, showMiniPlayer, highlightActiveTrack } from './ui.js';
 import { stopConversation } from './gemini.js';
 
 export const PlayerStore = {
@@ -19,10 +20,15 @@ export const PlayerStore = {
     currentPreviewQueue: []
 };
 
+/*
+Descriptif :
+Applique une réduction logarithmique (cubique) du volume sur une durée donnée
+pour offrir une transition sonore naturelle à l'oreille humaine avant de 
+mettre le flux en pause.
+*/
 export function fadeOut(audio, duration = 400) {
     return new Promise(resolve => {
         if (!audio || audio.paused) return resolve();
-        // Récupération et conversion cubique de la valeur du slider
         const rawVolume = parseFloat(DOM.volumeSlider.value) || 1;
         const targetVolume = Math.pow(rawVolume, 3);
         const step = targetVolume / (duration / 50);
@@ -41,9 +47,13 @@ export function fadeOut(audio, duration = 400) {
     });
 }
 
+/*
+Descriptif :
+Démarre la lecture avec un volume à zéro puis l'augmente progressivement
+selon une courbe cubique jusqu'au volume ciblé par l'utilisateur.
+*/
 export function fadeIn(audio, duration = 400) {
     if (!audio) return;
-    // Récupération et conversion cubique de la valeur du slider
     const rawVolume = parseFloat(DOM.volumeSlider.value) || 1;
     const targetVolume = Math.pow(rawVolume, 3);
 
@@ -78,37 +88,46 @@ export function setupMusicPlayerEvents() {
     PlayerStore.musicPlayer.onended = playNextTrack;
 }
 
+/*
+Descriptif :
+Fonction centrale du lecteur. Initialise ou réinitialise le flux audio avec 
+les nouvelles données du backend. Met à jour les métadonnées dans le DOM,
+affiche le mini-lecteur et applique la surbrillance visuelle sur la vue active.
+*/
 export function playMusic(trackData) {
     stopConversation();
-    closeAllDrawers();
-
-    DOM.statusText.textContent = "Lecture en cours";
-    DOM.toggleBtn.className = "fab-btn btn-disconnected";
     removeLoadingState();
+
+    // Suppression de l'injection statique "Lecture en cours" ici
+    // if (DOM.fullPlayerStatus) DOM.fullPlayerStatus.textContent = "Lecture en cours";
+    if (DOM.fullPlayerStatus && DOM.fullPlayerStatus.textContent === "Recherche en cours...") {
+        DOM.fullPlayerStatus.textContent = "";
+    }
+    
+    DOM.toggleBtn.className = "fab-btn btn-disconnected";
 
     DOM.progressBar.value = 0;
     DOM.timeCurrent.textContent = "0:00";
     DOM.timeTotal.textContent = "0:00";
 
-    DOM.playerContainer.classList.remove("hidden");
     DOM.trackTitle.textContent = trackData.title || "Titre inconnu";
     DOM.trackArtist.textContent = trackData.artist || "Artiste inconnu";
 
     if (trackData.preview_queue) {
         PlayerStore.currentPreviewQueue = trackData.preview_queue;
-        updateQueuePreview(trackData.preview_queue);
-        renderQueueDrawer(trackData.preview_queue);
+        renderQueue(trackData.preview_queue);
     }
 
     if (trackData.thumbnail) {
         DOM.trackCover.src = trackData.thumbnail;
-        DOM.trackCover.classList.remove("hidden");
         DOM.backgroundBlur.style.backgroundImage = `url('${trackData.thumbnail}')`;
     }
 
+    showMiniPlayer(trackData);
+    highlightActiveTrack(trackData.video_id);
+
     if (!PlayerStore.musicPlayer) {
         PlayerStore.musicPlayer = new Audio();
-        // Initialisation de l'audio avec le cube de la valeur affichée
         PlayerStore.musicPlayer.volume = Math.pow(parseFloat(DOM.volumeSlider.value) || 1, 3);
         setupMusicPlayerEvents();
     }
@@ -117,7 +136,9 @@ export function playMusic(trackData) {
 
     PlayerStore.musicPlayer.src = `/stream/${trackData.video_id}`;
     fadeIn(PlayerStore.musicPlayer);
+
     DOM.btnPlayPause.innerHTML = DOM.SVG_PAUSE;
+    DOM.btnMiniPlayPause.innerHTML = DOM.SVG_MINI_PAUSE;
 }
 
 export async function triggerRefill() {
@@ -128,8 +149,7 @@ export async function triggerRefill() {
         if (result.status === "success") {
             if (result.preview_queue) {
                 PlayerStore.currentPreviewQueue = result.preview_queue;
-                updateQueuePreview(result.preview_queue);
-                renderQueueDrawer(result.preview_queue);
+                renderQueue(result.preview_queue);
             }
             return true;
         }
@@ -177,7 +197,6 @@ export async function playPrevTrack() {
 export async function playSpecificTrack(videoId) {
     stopConversation();
     showLoadingState();
-    closeAllDrawers();
     try {
         const data = await API.playSpecific(videoId);
         if (!data.error) {
@@ -195,7 +214,6 @@ export async function playSpecificTrack(videoId) {
 export async function playPlaylistTrack(playlistId, videoId) {
     stopConversation();
     showLoadingState();
-    closeAllDrawers();
     try {
         const data = await API.playPlaylist(playlistId, videoId);
         if (!data.error) {
@@ -218,8 +236,7 @@ export async function addTrackToQueue(videoId) {
         if (data.status === "success" && data.preview_queue) {
             showToast("Titre ajouté à la file.");
             PlayerStore.currentPreviewQueue = data.preview_queue;
-            updateQueuePreview(data.preview_queue);
-            renderQueueDrawer(data.preview_queue);
+            renderQueue(data.preview_queue);
         } else {
             showToast("Erreur lors de l'ajout.");
         }
@@ -255,7 +272,6 @@ export async function restartCurrentPlaylist() {
 export async function playQueueTrack(videoId) {
     stopConversation();
     showLoadingState();
-    closeAllDrawers();
     try {
         const data = await API.jumpToTrack(videoId);
         if (!data.error) {

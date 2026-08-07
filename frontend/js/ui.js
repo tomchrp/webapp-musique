@@ -1,9 +1,13 @@
 /*
 ==============================================================================
 Chemin : frontend/js/ui.js
-Utilité : Fonctions de manipulation visuelle de l'interface utilisateur.
-          Mise à jour : Implémentation du système d'exclusivité des volets
-          via la fonction maîtresse closeAllDrawers().
+Utilité : Fonctions de manipulation visuelle et gestionnaire de Vues (SPA).
+Modifications :
+  - Centralisation et export de handleMarqueeEnter et handleMarqueeLeave.
+  - Modification de renderListenAgain et renderPlaylistsList pour injecter
+    les titres en surcouche (overlay) dans l'image.
+  - Attachement dynamique des écouteurs de survol sur chaque carte générée.
+  - Skeletons simplifiés (uniquement des blocs carrés).
 ==============================================================================
 */
 
@@ -25,173 +29,414 @@ export function formatTime(seconds) {
     return `${m}:${s}`;
 }
 
+// ==========================================
+// MÉCANIQUE DÉFILEMENT TEXTE (MARQUEE)
+// ==========================================
+
+export const handleMarqueeEnter = (e) => {
+    const container = e.currentTarget;
+    const textNode = container.firstElementChild;
+    if (!textNode) return;
+
+    const overflow = textNode.offsetWidth - container.clientWidth;
+    if (overflow > 0) {
+        container.style.textOverflow = 'clip';
+        const duration = Math.max(overflow * 15, 1000);
+        textNode.style.transition = `transform ${duration}ms linear`;
+        textNode.style.transform = `translateX(-${overflow}px)`;
+    }
+};
+
+export const handleMarqueeLeave = (e) => {
+    const container = e.currentTarget;
+    const textNode = container.firstElementChild;
+    if (!textNode) return;
+
+    textNode.style.transition = 'transform 0.3s ease';
+    textNode.style.transform = 'translateX(0)';
+    setTimeout(() => {
+        if (textNode.style.transform === 'translateX(0)' || textNode.style.transform === 'translateX(0px)') {
+            container.style.textOverflow = 'ellipsis';
+        }
+    }, 300);
+};
+
 export function showLoadingState() {
-    DOM.playerContainer.classList.remove("hidden");
-    DOM.trackTitle.textContent = "Recherche en cours...";
-    DOM.trackTitle.classList.add("skeleton");
-    DOM.trackArtist.textContent = "Veuillez patienter";
-    DOM.trackArtist.classList.add("skeleton");
-    DOM.trackCover.classList.add("skeleton-cover");
-    DOM.trackCover.src = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
-    DOM.trackCover.classList.remove("hidden");
-    DOM.timeCurrent.textContent = "0:00";
-    DOM.timeTotal.textContent = "0:00";
-    DOM.progressBar.value = 0;
+    if (DOM.fullPlayerStatus) DOM.fullPlayerStatus.textContent = "Recherche en cours...";
+    if (DOM.trackTitle) {
+        DOM.trackTitle.textContent = "Recherche en cours...";
+        DOM.trackTitle.classList.add("skeleton");
+    }
+    if (DOM.trackArtist) {
+        DOM.trackArtist.textContent = "Veuillez patienter";
+        DOM.trackArtist.classList.add("skeleton");
+    }
+    if (DOM.trackCover) {
+        DOM.trackCover.classList.add("skeleton-cover");
+        DOM.trackCover.src = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
+    }
+    if (DOM.timeCurrent) DOM.timeCurrent.textContent = "0:00";
+    if (DOM.timeTotal) DOM.timeTotal.textContent = "0:00";
+    if (DOM.progressBar) DOM.progressBar.value = 0;
 }
 
 export function removeLoadingState() {
-    DOM.trackTitle.classList.remove("skeleton");
-    DOM.trackArtist.classList.remove("skeleton");
-    DOM.trackCover.classList.remove("skeleton-cover");
+    if (DOM.trackTitle) DOM.trackTitle.classList.remove("skeleton");
+    if (DOM.trackArtist) DOM.trackArtist.classList.remove("skeleton");
+    if (DOM.trackCover) DOM.trackCover.classList.remove("skeleton-cover");
 }
 
-// ==========================================
-// GESTIONNAIRE CENTRALISÉ DES VOLETS
-// ==========================================
+export function showView(viewId, stateData = null, pushToHistory = true) {
+    DOM.viewHome.classList.add('hidden');
+    DOM.viewPlaylist.classList.add('hidden');
+    DOM.viewCollection.classList.add('hidden');
 
-export function closeAllDrawers() {
-    /* 
-    Descriptif :
-    Coupe-circuit garantissant qu'un seul volet est ouvert à la fois.
-    Ferme tous les tiroirs et réinitialise l'état global.
-    */
-    DOM.libraryDrawer.classList.add('hidden');
-    DOM.queueDrawer.classList.add('hidden');
-    DOM.playlistAddDrawer.classList.add('hidden');
-    AppState.isDrawerOpen = false;
+    const targetView = document.getElementById(viewId);
+    if (targetView) {
+        targetView.classList.remove('hidden');
+        AppState.currentView = viewId.replace('view-', '');
+        DOM.appContent.scrollTop = 0;
+    }
+
+    if (pushToHistory) {
+        history.pushState({ view: viewId, data: stateData }, '', `#${AppState.currentView}`);
+    }
 }
 
-export function openDrawer() {
-    closeAllDrawers(); // Nettoyage de l'écran avant ouverture
-    AppState.isDrawerOpen = true;
-    DOM.libraryDrawer.classList.remove('hidden');
-    DOM.drawerTitle.classList.add('hidden');
-    DOM.drawerTabs.classList.remove('hidden');
-    DOM.btnDrawerBack.classList.add('hidden');
-    DOM.drawerActions.classList.add('hidden');
-
-    if (DOM.tabDiscovery.classList.contains('active')) {
-        AppState.currentDrawerState = 'discovery';
-        DOM.libraryContent.classList.add('hidden');
-        DOM.discoveryContent.classList.remove('hidden');
-        loadListenAgain();
+export function updatePhantomPadding() {
+    if (!DOM.miniPlayer.classList.contains('hidden')) {
+        const miniPlayerHeight = DOM.miniPlayer.offsetHeight;
+        document.documentElement.style.setProperty('--phantom-padding', `${miniPlayerHeight + 15}px`);
     } else {
-        AppState.currentDrawerState = 'list';
-        DOM.discoveryContent.classList.add('hidden');
-        DOM.libraryContent.classList.remove('hidden');
-        loadPlaylists();
+        document.documentElement.style.setProperty('--phantom-padding', '0px');
     }
 }
 
-export function closeDrawer() {
-    closeAllDrawers();
+export function showMiniPlayer(trackData) {
+    DOM.miniTrackTitle.textContent = trackData.title || "Titre inconnu";
+    DOM.miniTrackArtist.textContent = trackData.artist || "Artiste inconnu";
+
+    if (trackData.thumbnail) {
+        DOM.miniTrackCover.src = trackData.thumbnail;
+    }
+
+    DOM.btnMiniPlayPause.innerHTML = DOM.SVG_MINI_PAUSE;
+    DOM.miniPlayer.classList.remove('hidden');
+    updatePhantomPadding();
 }
 
-export function openQueueDrawer() {
-    closeAllDrawers(); // Nettoyage de l'écran avant ouverture
-    DOM.queueDrawer.classList.remove('hidden');
-}
-
-export function closeQueueDrawer() {
-    closeAllDrawers();
-}
-
-export function openAddPlaylistDrawer() {
-    closeAllDrawers(); // Nettoyage de l'écran avant ouverture
-    DOM.playlistAddDrawer.classList.remove('hidden');
-}
-
-export function closeAddPlaylistDrawer() {
-    closeAllDrawers();
-}
-
-// ==========================================
-// RENDU DES LISTES ET DONNÉES
-// ==========================================
-
-export function refreshActiveDrawer() {
-    if (!AppState.isDrawerOpen) return;
-    if (AppState.currentDrawerState === 'list') {
-        loadPlaylists();
-    } else if (AppState.currentDrawerState === 'discovery') {
-        loadListenAgain();
-    } else if (AppState.currentDrawerState === 'detail') {
-        if (AppState.currentPlaylistId) {
-            loadPlaylistDetails(AppState.currentPlaylistId, DOM.drawerTitle.textContent);
-        }
+export function toggleFullPlayer(show) {
+    if (show) {
+        DOM.fullPlayer.classList.remove('hidden');
+        void DOM.fullPlayer.offsetWidth;
+        DOM.fullPlayer.classList.add('player-active');
+    } else {
+        DOM.fullPlayer.classList.remove('player-active');
+        setTimeout(() => {
+            DOM.fullPlayer.classList.add('hidden');
+        }, 400);
     }
 }
 
-export function renderSkeletonList() {
-    DOM.libraryContent.innerHTML = '';
-    for (let i = 0; i < 3; i++) {
-        const item = document.createElement('div');
-        item.className = 'library-item';
-        item.innerHTML = `
-            <div style="width: 55px; height: 55px; border-radius: 8px;" class="skeleton"></div>
-            <div class="library-item-info">
-                <span class="library-item-title skeleton" style="width: 60%; margin-bottom: 5px;">Chargement</span>
-                <span class="library-item-subtitle skeleton" style="width: 40%;">...</span>
-            </div>
-        `;
-        DOM.libraryContent.appendChild(item);
-    }
-}
+export function highlightActiveTrack(videoId) {
+    AppState.activeVideoId = videoId;
 
-export function renderPlaylistsList(playlists) {
-    DOM.libraryContent.innerHTML = '';
-    if (playlists.length === 0) {
-        DOM.libraryContent.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted);">Aucune playlist trouvée.</div>';
-        return;
-    }
-    playlists.forEach(playlist => {
-        const item = document.createElement('div');
-        item.className = 'library-item';
-        const thumbSrc = playlist.thumbnail ? playlist.thumbnail : 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
-        item.innerHTML = `
-            <img src="${thumbSrc}" alt="Cover">
-            <div class="library-item-info">
-                <span class="library-item-title">${playlist.title}</span>
-                <span class="library-item-subtitle">${playlist.count} titres</span>
-            </div>
-        `;
-        item.addEventListener('click', () => {
-            loadPlaylistDetails(playlist.playlistId, playlist.title);
-        });
-        DOM.libraryContent.appendChild(item);
+    document.querySelectorAll('.track-active').forEach(el => {
+        el.classList.remove('track-active');
+    });
+
+    if (!videoId) return;
+
+    document.querySelectorAll(`[data-video-id="${videoId}"]`).forEach(el => {
+        el.classList.add('track-active');
     });
 }
 
-export async function loadPlaylists() {
-    AppState.currentDrawerState = 'list';
-    AppState.currentPlaylistId = null;
-    DOM.drawerTitle.textContent = "Mes Playlists";
-    DOM.btnDrawerBack.classList.add('hidden');
-    DOM.drawerActions.classList.add('hidden');
+export function renderListenAgainSkeleton() {
+    DOM.recentCarousel.innerHTML = '';
+    DOM.recentPagination.innerHTML = '';
+    const pageDiv = document.createElement('div');
+    pageDiv.className = 'carousel-page';
+    for (let i = 0; i < 9; i++) {
+        const item = document.createElement('div');
+        // Structure purgée de tout texte pour le Skeleton
+        item.className = 'recent-item skeleton';
+        pageDiv.appendChild(item);
+    }
+    DOM.recentCarousel.appendChild(pageDiv);
+}
 
+export function renderPlaylistsSkeleton() {
+    DOM.playlistsCarousel.innerHTML = '';
+    DOM.playlistsPagination.innerHTML = '';
+    const pageDiv = document.createElement('div');
+    pageDiv.className = 'carousel-page playlist-page';
+    for (let i = 0; i < 6; i++) {
+        const item = document.createElement('div');
+        item.className = 'playlist-card skeleton';
+        pageDiv.appendChild(item);
+    }
+    DOM.playlistsCarousel.appendChild(pageDiv);
+}
+
+export function renderCollectionList(items, title, isPlaylistMode = false) {
+    DOM.viewCollectionTitle.textContent = title;
+    DOM.collectionListContainer.innerHTML = '';
+
+    items.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'library-item';
+
+        if (!isPlaylistMode && item.type !== 'playlist' && item.type !== 'other') {
+            div.dataset.videoId = item.id;
+            if (AppState.activeVideoId === item.id) div.classList.add('track-active');
+        }
+
+        const thumbSrc = item.thumbnail ? item.thumbnail : 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+        const itemSubtitle = isPlaylistMode ? `${item.count} titres` : item.subtitle;
+
+        div.innerHTML = `
+            <img src="${thumbSrc}" alt="Cover">
+            <div class="library-item-info">
+                <span class="library-item-title">${item.title}</span>
+                <span class="library-item-subtitle">${itemSubtitle}</span>
+            </div>
+        `;
+
+        div.addEventListener('click', () => {
+            if (isPlaylistMode || item.type === 'playlist' || item.type === 'other') {
+                loadPlaylistDetails(item.id || item.playlistId, item.title);
+            } else {
+                playSpecificTrack(item.id);
+            }
+        });
+        DOM.collectionListContainer.appendChild(div);
+    });
+
+    showView('view-collection');
+}
+
+export async function loadListenAgain() {
+    if (AppState.cachedListenAgain) {
+        renderListenAgain(AppState.cachedListenAgain);
+        return;
+    }
+    renderListenAgainSkeleton();
+    try {
+        AppState.cachedListenAgain = await API.getListenAgain();
+        renderListenAgain(AppState.cachedListenAgain);
+    } catch (e) {
+        DOM.recentCarousel.innerHTML = '<div style="padding: 20px; color: red;">Erreur de chargement.</div>';
+    }
+}
+
+export function renderListenAgain(items) {
+    DOM.recentCarousel.innerHTML = '';
+    DOM.recentPagination.innerHTML = '';
+
+    if (items.length === 0) {
+        DOM.recentCarousel.innerHTML = '<div style="padding: 20px; color: var(--text-muted);">Rien à afficher.</div>';
+        return;
+    }
+
+    const maxItems = 27;
+    const displayItems = items.slice(0, maxItems);
+
+    const showCollection = () => renderCollectionList(items, "Écoutés récemment");
+    if (DOM.titleRecent) {
+        DOM.titleRecent.onclick = showCollection;
+        DOM.titleRecent.classList.add('clickable-title');
+    }
+
+    if (items.length > maxItems) {
+        if (DOM.btnRecentAll) {
+            DOM.btnRecentAll.classList.remove('hidden');
+            DOM.btnRecentAll.onclick = showCollection;
+        }
+    } else {
+        if (DOM.btnRecentAll) DOM.btnRecentAll.classList.add('hidden');
+    }
+
+    const pagesCount = Math.ceil(displayItems.length / 9);
+
+    for (let i = 0; i < pagesCount; i++) {
+        const pageDiv = document.createElement('div');
+        pageDiv.className = 'carousel-page';
+
+        const chunk = displayItems.slice(i * 9, i * 9 + 9);
+        chunk.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'recent-item';
+
+            if (item.type !== 'playlist' && item.type !== 'other') {
+                div.dataset.videoId = item.id;
+                if (AppState.activeVideoId === item.id) div.classList.add('track-active');
+            }
+
+            // Injection du titre en surcouche (Overlay) avec l'effet Marquee prêt
+            div.innerHTML = `
+                <img src="${item.thumbnail}" alt="Cover">
+                <div class="cover-overlay">
+                    <div class="marquee-container cover-title-container">
+                        <span class="marquee-text cover-title">${item.title}</span>
+                    </div>
+                </div>
+            `;
+
+            // On capte le survol de la carte entière pour animer le texte interne
+            div.addEventListener('mouseenter', (e) => {
+                const container = div.querySelector('.marquee-container');
+                if (container) handleMarqueeEnter({ currentTarget: container });
+            });
+            div.addEventListener('mouseleave', (e) => {
+                const container = div.querySelector('.marquee-container');
+                if (container) handleMarqueeLeave({ currentTarget: container });
+            });
+
+            div.addEventListener('click', () => {
+                if (item.type === 'playlist' || item.type === 'other') {
+                    loadPlaylistDetails(item.id, item.title);
+                } else {
+                    playSpecificTrack(item.id);
+                }
+            });
+            pageDiv.appendChild(div);
+        });
+
+        DOM.recentCarousel.appendChild(pageDiv);
+
+        const dot = document.createElement('div');
+        dot.className = i === 0 ? 'dot active' : 'dot';
+        DOM.recentPagination.appendChild(dot);
+    }
+
+    if (pagesCount <= 1) {
+        if (DOM.recentPagination) DOM.recentPagination.classList.add('hidden');
+    } else {
+        if (DOM.recentPagination) DOM.recentPagination.classList.remove('hidden');
+    }
+}
+
+export async function loadPlaylists() {
     if (AppState.cachedPlaylists) {
         renderPlaylistsList(AppState.cachedPlaylists);
         return;
     }
-    renderSkeletonList();
+    renderPlaylistsSkeleton();
     try {
         AppState.cachedPlaylists = await API.getPlaylists();
         renderPlaylistsList(AppState.cachedPlaylists);
     } catch (e) {
-        DOM.libraryContent.innerHTML = '<div style="padding: 20px; text-align: center; color: red;">Erreur de chargement.</div>';
-        console.error("Erreur chargement playlists :", e);
+        DOM.playlistsCarousel.innerHTML = '<div style="padding: 20px; color: red;">Erreur de chargement.</div>';
+    }
+}
+
+export function renderPlaylistsList(playlists) {
+    DOM.playlistsCarousel.innerHTML = '';
+    DOM.playlistsPagination.innerHTML = '';
+
+    if (playlists.length === 0) {
+        DOM.playlistsCarousel.innerHTML = '<div style="padding: 20px; color: var(--text-muted);">Aucune playlist trouvée.</div>';
+        return;
+    }
+
+    const maxItems = 18;
+    const displayItems = playlists.slice(0, maxItems);
+
+    const showCollection = () => renderCollectionList(playlists, "Mes Playlists", true);
+    if (DOM.titlePlaylists) {
+        DOM.titlePlaylists.onclick = showCollection;
+        DOM.titlePlaylists.classList.add('clickable-title');
+    }
+
+    const pagesCount = Math.ceil(displayItems.length / 6);
+
+    for (let i = 0; i < pagesCount; i++) {
+        const pageDiv = document.createElement('div');
+        pageDiv.className = 'carousel-page playlist-page';
+
+        const chunk = displayItems.slice(i * 6, i * 6 + 6);
+        chunk.forEach(playlist => {
+            const item = document.createElement('div');
+            item.className = 'playlist-card';
+            const thumbSrc = playlist.thumbnail ? playlist.thumbnail : 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+
+            // Injection du titre en surcouche (Overlay), suppression du sous-titre complet
+            item.innerHTML = `
+                <img src="${thumbSrc}" alt="Cover">
+                <div class="cover-overlay">
+                    <div class="marquee-container cover-title-container">
+                        <span class="marquee-text cover-title">${playlist.title}</span>
+                    </div>
+                </div>
+            `;
+
+            // Animation du texte au survol de la carte
+            item.addEventListener('mouseenter', (e) => {
+                const container = item.querySelector('.marquee-container');
+                if (container) handleMarqueeEnter({ currentTarget: container });
+            });
+            item.addEventListener('mouseleave', (e) => {
+                const container = item.querySelector('.marquee-container');
+                if (container) handleMarqueeLeave({ currentTarget: container });
+            });
+
+            item.addEventListener('click', () => {
+                loadPlaylistDetails(playlist.playlistId, playlist.title);
+            });
+            pageDiv.appendChild(item);
+        });
+
+        DOM.playlistsCarousel.appendChild(pageDiv);
+
+        const dot = document.createElement('div');
+        dot.className = i === 0 ? 'dot active' : 'dot';
+        DOM.playlistsPagination.appendChild(dot);
+    }
+
+    if (pagesCount <= 1) {
+        if (DOM.playlistsPagination) DOM.playlistsPagination.classList.add('hidden');
+    } else {
+        if (DOM.playlistsPagination) DOM.playlistsPagination.classList.remove('hidden');
+    }
+}
+
+export async function loadPlaylistDetails(playlistId, title) {
+    AppState.currentPlaylistId = playlistId;
+    DOM.viewPlaylistTitle.textContent = title;
+
+    showView('view-playlist', { id: playlistId, title: title });
+
+    if (AppState.cachedPlaylistDetails[playlistId]) {
+        renderPlaylistTracks(AppState.cachedPlaylistDetails[playlistId]);
+        return;
+    }
+
+    DOM.playlistTracksContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted);">Chargement de la liste...</div>';
+    try {
+        const data = await API.getPlaylistDetails(playlistId);
+        AppState.cachedPlaylistDetails[playlistId] = data;
+        renderPlaylistTracks(data);
+    } catch (e) {
+        DOM.playlistTracksContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: red;">Erreur de chargement.</div>';
     }
 }
 
 export function renderPlaylistTracks(data) {
-    DOM.libraryContent.innerHTML = '';
+    DOM.playlistTracksContainer.innerHTML = '';
     if (!data.tracks || data.tracks.length === 0) {
-        DOM.libraryContent.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted);">Playlist vide.</div>';
+        DOM.playlistTracksContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted);">Playlist vide.</div>';
         return;
     }
     data.tracks.forEach(track => {
         const item = document.createElement('div');
         item.className = 'library-item';
+        item.dataset.videoId = track.video_id;
+
+        if (AppState.activeVideoId === track.video_id) {
+            item.classList.add('track-active');
+        }
+
         const thumbSrc = track.thumbnail ? track.thumbnail : 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
         item.innerHTML = `
             <img src="${thumbSrc}" alt="Cover">
@@ -203,123 +448,12 @@ export function renderPlaylistTracks(data) {
         item.addEventListener('click', () => {
             playPlaylistTrack(AppState.currentPlaylistId, track.video_id);
         });
-        DOM.libraryContent.appendChild(item);
+        DOM.playlistTracksContainer.appendChild(item);
     });
 }
 
-export async function loadPlaylistDetails(playlistId, title) {
-    AppState.currentDrawerState = 'detail';
-    AppState.currentPlaylistId = playlistId;
-    DOM.drawerTitle.textContent = title;
-
-    DOM.drawerTitle.classList.remove('hidden');
-    DOM.drawerTabs.classList.add('hidden');
-    DOM.btnDrawerBack.classList.remove('hidden');
-    DOM.drawerActions.classList.remove('hidden');
-
-    DOM.discoveryContent.classList.add('hidden');
-    DOM.libraryContent.classList.remove('hidden');
-
-    if (AppState.cachedPlaylistDetails[playlistId]) {
-        renderPlaylistTracks(AppState.cachedPlaylistDetails[playlistId]);
-        return;
-    }
-    renderSkeletonList();
-    try {
-        const data = await API.getPlaylistDetails(playlistId);
-        AppState.cachedPlaylistDetails[playlistId] = data;
-        renderPlaylistTracks(data);
-    } catch (e) {
-        DOM.libraryContent.innerHTML = '<div style="padding: 20px; text-align: center; color: red;">Erreur de chargement.</div>';
-        console.error("Erreur chargement détails playlist :", e);
-    }
-}
-
-export function renderListenAgain(items) {
-    DOM.discoveryContent.innerHTML = '';
-    if (items.length === 0) {
-        DOM.discoveryContent.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted); width: 100%;">Rien à afficher pour le moment.</div>';
-        return;
-    }
-    items.forEach(item => {
-        const div = document.createElement('div');
-        div.className = 'grid-item';
-        div.innerHTML = `
-            <img src="${item.thumbnail}" alt="Cover">
-            <div class="grid-item-info">
-                <span class="grid-item-title">${item.title}</span>
-                <span class="grid-item-subtitle">${item.subtitle}</span>
-            </div>
-        `;
-        div.addEventListener('click', () => {
-            if (item.type === 'playlist' || item.type === 'other') {
-                loadPlaylistDetails(item.id, item.title);
-            } else {
-                playSpecificTrack(item.id);
-            }
-        });
-        DOM.discoveryContent.appendChild(div);
-    });
-}
-
-export async function loadListenAgain() {
-    if (AppState.cachedListenAgain) {
-        renderListenAgain(AppState.cachedListenAgain);
-        return;
-    }
-    DOM.discoveryContent.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted); width: 100%;">Génération de la grille...</div>';
-    try {
-        AppState.cachedListenAgain = await API.getListenAgain();
-        renderListenAgain(AppState.cachedListenAgain);
-    } catch (e) {
-        DOM.discoveryContent.innerHTML = '<div style="padding: 20px; text-align: center; color: red; width: 100%;">Erreur de chargement.</div>';
-    }
-}
-
-export function updateQueuePreview(previewQueue) {
-    const container = DOM.queuePreviewContainer;
-    container.innerHTML = '';
-
-    if (!previewQueue || previewQueue.length === 0) {
-        container.classList.add('hidden');
-        return;
-    }
-
-    container.classList.remove('hidden');
-
-    const header = document.createElement('div');
-    header.className = 'queue-preview-header';
-    header.textContent = 'À suivre';
-    container.appendChild(header);
-
-    previewQueue.slice(0, 3).forEach(track => {
-        const item = document.createElement('div');
-        item.className = 'library-item';
-
-        item.style.padding = '8px 10px';
-        item.style.borderRadius = '10px';
-
-        const thumbSrc = track.thumbnail || 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
-        const artistName = track.artist || 'Artiste inconnu';
-
-        item.innerHTML = `
-            <img src="${thumbSrc}" alt="Cover" style="width: 45px; height: 45px; min-width: 45px;">
-            <div class="library-item-info" style="text-align: left;">
-                <span class="library-item-title">${track.title}</span>
-                <span class="library-item-subtitle">${artistName}</span>
-            </div>
-        `;
-
-        item.addEventListener('click', () => {
-            openQueueDrawer();
-        });
-
-        container.appendChild(item);
-    });
-}
-
-export function renderQueueDrawer(previewQueue) {
-    const container = document.getElementById('queue-content');
+export function renderQueue(previewQueue) {
+    const container = DOM.queueTracksContainer;
     container.innerHTML = '';
 
     if (!previewQueue || previewQueue.length === 0) {
@@ -342,14 +476,24 @@ export function renderQueueDrawer(previewQueue) {
 
     Object.values(groups).forEach(group => {
         if (group.items.length > 0) {
+            const groupDiv = document.createElement('div');
+            groupDiv.className = 'queue-group';
+
             const titleEl = document.createElement('div');
-            titleEl.className = 'queue-section-title';
+            titleEl.className = 'queue-sticky-header';
             titleEl.textContent = group.title;
-            container.appendChild(titleEl);
+            groupDiv.appendChild(titleEl);
 
             group.items.forEach(track => {
                 const item = document.createElement('div');
                 item.className = 'queue-item';
+                const vidId = track.videoId || track.video_id;
+                item.dataset.videoId = vidId;
+
+                if (AppState.activeVideoId === vidId) {
+                    item.classList.add('track-active');
+                }
+
                 const thumbSrc = track.thumbnail || 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
                 const artistName = track.artist || 'Artiste inconnu';
 
@@ -362,11 +506,13 @@ export function renderQueueDrawer(previewQueue) {
                 `;
 
                 item.addEventListener('click', () => {
-                    playQueueTrack(track.videoId || track.video_id);
+                    playQueueTrack(vidId);
                 });
 
-                container.appendChild(item);
+                groupDiv.appendChild(item);
             });
+
+            container.appendChild(groupDiv);
         }
     });
 }

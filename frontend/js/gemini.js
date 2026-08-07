@@ -1,15 +1,17 @@
 /*
 ==============================================================================
 Chemin : frontend/js/gemini.js
-Utilité : Gestionnaire de l'assistant vocal IA. Initialise la connexion
-          WebSocket et intercepte les nouvelles actions de contrôle.
+Utilité : Gestionnaire de l'assistant vocal IA (Gemini Live). 
+          Gère le flux Web Audio et les appels réseau par WebSocket.
+Modifications :
+  - Modification de visualizeAura() pour afficher la voix de l'IA (LLM) en blanc pur.
 ==============================================================================
 */
 
 import * as DOM from './constants.js';
-import { AppState, clearCaches } from './state.js';
+import { clearCaches } from './state.js';
 import { playMusic, PlayerStore, fadeIn, playNextTrack, playPrevTrack, skipCurrentPlaylist, restartCurrentPlaylist } from './player.js';
-import { showToast, showLoadingState, removeLoadingState, closeAllDrawers, refreshActiveDrawer, updateQueuePreview, renderQueueDrawer } from './ui.js';
+import { showToast, showLoadingState, removeLoadingState, loadPlaylists, renderQueue } from './ui.js';
 
 export const GeminiStore = {
     ws: null,
@@ -36,6 +38,8 @@ export function convertFloat32ToInt16(float32Array) {
 export function visualizeAura() {
     let auraSize = 0;
     let auraColor = 'rgba(255, 255, 255, 0)';
+
+    // Voix Utilisateur (Vert)
     if (GeminiStore.userAnalyser) {
         const dataArray = new Float32Array(GeminiStore.userAnalyser.fftSize);
         GeminiStore.userAnalyser.getFloatTimeDomainData(dataArray);
@@ -47,6 +51,8 @@ export function visualizeAura() {
             auraColor = `rgba(29, 185, 84, ${Math.min(rms * 5, 0.8)})`;
         }
     }
+
+    // Voix IA Gemini (Blanc pur)
     if (auraSize === 0 && GeminiStore.geminiAnalyser) {
         const dataArray = new Float32Array(GeminiStore.geminiAnalyser.fftSize);
         GeminiStore.geminiAnalyser.getFloatTimeDomainData(dataArray);
@@ -55,9 +61,11 @@ export function visualizeAura() {
         const rms = Math.sqrt(sumSquares / dataArray.length);
         if (rms > 0.01) {
             auraSize = rms * 400;
-            auraColor = `rgba(180, 0, 255, ${Math.min(rms * 4, 0.8)})`;
+            // Modification : Passage au blanc rgba(255, 255, 255, x)
+            auraColor = `rgba(255, 255, 255, ${Math.min(rms * 4, 0.8)})`;
         }
     }
+
     document.documentElement.style.setProperty('--aura-size', `${auraSize}px`);
     document.documentElement.style.setProperty('--aura-color', auraColor);
     GeminiStore.animationFrameId = requestAnimationFrame(visualizeAura);
@@ -123,22 +131,19 @@ export function stopConversation() {
     if (GeminiStore.mediaStream) { GeminiStore.mediaStream.getTracks().forEach(track => track.stop()); GeminiStore.mediaStream = null; }
     if (GeminiStore.playbackContext) { GeminiStore.playbackContext.close(); GeminiStore.playbackContext = null; }
 
-    if (!PlayerStore.musicPlayer || PlayerStore.musicPlayer.paused) {
-        DOM.statusText.textContent = "Assistant prêt";
-        DOM.toggleBtn.className = "fab-btn btn-disconnected";
-    }
+    if (DOM.fullPlayerStatus) DOM.fullPlayerStatus.textContent = "Assistant prêt";
+    DOM.toggleBtn.className = "fab-btn btn-disconnected";
 }
 
 export async function startConversation() {
-    closeAllDrawers();
     try {
-        DOM.statusText.textContent = "Connexion...";
+        if (DOM.fullPlayerStatus) DOM.fullPlayerStatus.textContent = "Connexion...";
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         GeminiStore.ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
         GeminiStore.ws.binaryType = "arraybuffer";
 
         GeminiStore.ws.onopen = async () => {
-            DOM.statusText.textContent = "À votre écoute";
+            if (DOM.fullPlayerStatus) DOM.fullPlayerStatus.textContent = "À votre écoute";
             DOM.toggleBtn.className = "fab-btn btn-connected";
             await setupAudioCapture();
             setupAudioPlayback();
@@ -157,8 +162,7 @@ export async function startConversation() {
                         showToast(message.message);
                         if (message.preview_queue) {
                             PlayerStore.currentPreviewQueue = message.preview_queue;
-                            updateQueuePreview(message.preview_queue);
-                            renderQueueDrawer(message.preview_queue);
+                            renderQueue(message.preview_queue);
                         }
                     }
                     else if (message.action === "control") {
@@ -168,12 +172,14 @@ export async function startConversation() {
                                 if (PlayerStore.musicPlayer && !PlayerStore.musicPlayer.paused) {
                                     PlayerStore.musicPlayer.pause();
                                     DOM.btnPlayPause.innerHTML = DOM.SVG_PLAY;
+                                    DOM.btnMiniPlayPause.innerHTML = DOM.SVG_MINI_PLAY;
                                 }
                                 break;
                             case "play":
                                 if (PlayerStore.musicPlayer && PlayerStore.musicPlayer.paused) {
                                     PlayerStore.musicPlayer.play();
                                     DOM.btnPlayPause.innerHTML = DOM.SVG_PAUSE;
+                                    DOM.btnMiniPlayPause.innerHTML = DOM.SVG_MINI_PAUSE;
                                 }
                                 break;
                             case "next":
@@ -192,7 +198,7 @@ export async function startConversation() {
                     }
                     else if (message.action === "library_updated") {
                         clearCaches();
-                        refreshActiveDrawer();
+                        loadPlaylists();
                     }
                     else if (message.action === "loading") {
                         showLoadingState();
@@ -213,6 +219,6 @@ export async function startConversation() {
         GeminiStore.ws.onclose = () => stopConversation();
         GeminiStore.ws.onerror = () => stopConversation();
     } catch (error) {
-        DOM.statusText.textContent = "Erreur réseau";
+        if (DOM.fullPlayerStatus) DOM.fullPlayerStatus.textContent = "Erreur réseau";
     }
 }

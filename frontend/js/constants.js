@@ -1,8 +1,9 @@
 /*
 ==============================================================================
 Chemin : frontend/js/constants.js
-Utilité : Référentiel des éléments du DOM et des icônes SVG vectorielles.
-Mise à jour : Suppression des références aux boutons de fermeture des tiroirs.
+Utilité : Référentiel centralisé des éléments du DOM et des icônes SVG.
+Modifications :
+  - Suppression de btnPlaylistsAll retiré de l'interface.
 ==============================================================================
 */
 
@@ -17,14 +18,62 @@ export const SVG_VOL_MUTE = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="
 export const SVG_SKIP_FWD = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg>`;
 export const SVG_SKIP_BWD = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>`;
 export const SVG_ADD_QUEUE = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/></svg>`;
+export const SVG_MINI_PLAY = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
+export const SVG_MINI_PAUSE = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
 
+export const searchInput = document.getElementById('search-input');
+export const searchResults = document.getElementById('search-results');
+export const btnVolume = document.getElementById('btn-volume');
+export const volumeSlider = document.getElementById('volume-slider');
 export const toggleBtn = document.getElementById('toggle-btn');
-export const statusText = document.getElementById('status-text');
+export const toastContainer = document.getElementById('toast-container');
+export const backgroundBlur = document.getElementById('background-blur');
 
-export const playerContainer = document.getElementById('player-container');
+export const appContent = document.getElementById('app-content');
+export const viewHome = document.getElementById('view-home');
+export const viewPlaylist = document.getElementById('view-playlist');
+export const viewCollection = document.getElementById('view-collection');
+
+export const titleRecent = document.getElementById('title-recent');
+export const titlePlaylists = document.getElementById('title-playlists');
+
+export const recentCarousel = document.getElementById('recent-carousel');
+export const playlistsCarousel = document.getElementById('playlists-carousel');
+export const viewPlaylistTitle = document.getElementById('view-playlist-title');
+export const playlistTracksContainer = document.getElementById('playlist-tracks-container');
+export const queueTracksContainer = document.getElementById('queue-tracks-container');
+export const collectionListContainer = document.getElementById('collection-list-container');
+export const viewCollectionTitle = document.getElementById('view-collection-title');
+
+export const recentPagination = document.getElementById('recent-pagination');
+export const playlistsPagination = document.getElementById('playlists-pagination');
+export const btnRecentAll = document.getElementById('btn-recent-all');
+
+export const btnPlaylistBack = document.getElementById('btn-playlist-back');
+export const btnCollectionBack = document.getElementById('btn-collection-back');
+export const btnPlaylistPlayAll = document.getElementById('btn-playlist-play-all');
+
+export const miniPlayer = document.getElementById('mini-player');
+export const miniTrackCover = document.getElementById('mini-track-cover');
+export const miniTrackTitle = document.getElementById('mini-track-title');
+export const miniTrackArtist = document.getElementById('mini-track-artist');
+export const miniTrackTitleContainer = document.getElementById('mini-track-title-container');
+export const miniTrackArtistContainer = document.getElementById('mini-track-artist-container');
+export const btnMiniPlayPause = document.getElementById('btn-mini-play-pause');
+export const btnMiniNext = document.getElementById('btn-mini-next');
+
+export const fullPlayer = document.getElementById('full-player');
+export const btnMinimizePlayer = document.getElementById('btn-minimize-player');
+export const fullPlayerStatus = document.getElementById('full-player-status');
 export const trackCover = document.getElementById('track-cover');
 export const trackTitle = document.getElementById('track-title');
 export const trackArtist = document.getElementById('track-artist');
+export const trackTitleContainer = document.getElementById('track-title-container');
+export const trackArtistContainer = document.getElementById('track-artist-container');
+export const btnAddPlaylist = document.getElementById('btn-add-playlist');
+export const progressBar = document.getElementById('progress-bar');
+export const timeCurrent = document.getElementById('time-current');
+export const timeTotal = document.getElementById('time-total');
 
 export const btnPrev = document.getElementById('btn-prev');
 export const btnPlayPause = document.getElementById('btn-play-pause');
@@ -32,37 +81,6 @@ export const btnNext = document.getElementById('btn-next');
 export const btnRestartPlaylist = document.getElementById('btn-restart-playlist');
 export const btnSkipPlaylist = document.getElementById('btn-skip-playlist');
 
-export const backgroundBlur = document.getElementById('background-blur');
-export const searchInput = document.getElementById('search-input');
-export const searchResults = document.getElementById('search-results');
-export const progressBar = document.getElementById('progress-bar');
-export const timeCurrent = document.getElementById('time-current');
-export const timeTotal = document.getElementById('time-total');
-export const toastContainer = document.getElementById('toast-container');
-
-export const btnLibrary = document.getElementById('btn-library');
-export const libraryDrawer = document.getElementById('library-drawer');
-export const btnDrawerBack = document.getElementById('btn-drawer-back');
-export const drawerTitle = document.getElementById('drawer-title');
-export const drawerTabs = document.getElementById('drawer-tabs');
-export const libraryContent = document.getElementById('library-content');
-export const drawerActions = document.getElementById('drawer-actions');
-export const btnDrawerPlay = document.getElementById('btn-drawer-play');
-export const tabPlaylists = document.getElementById('tab-playlists');
-export const tabDiscovery = document.getElementById('tab-discovery');
-export const discoveryContent = document.getElementById('discovery-content');
-export const btnDrawerRefresh = document.getElementById('btn-drawer-refresh');
-
-export const btnVolume = document.getElementById('btn-volume');
-export const volumeSlider = document.getElementById('volume-slider');
-
-export const btnAddPlaylist = document.getElementById('btn-add-playlist');
-export const playlistAddDrawer = document.getElementById('playlist-add-drawer');
-export const addDrawerList = document.getElementById('add-drawer-list');
-
-export const queuePreviewContainer = document.getElementById('queue-preview-container');
-export const queueDrawer = document.getElementById('queue-drawer');
-export const queueTitleManual = document.getElementById('queue-title-manual');
-export const userQueueList = document.getElementById('user-queue-list');
-export const queueTitleRadio = document.getElementById('queue-title-radio');
-export const radioQueueList = document.getElementById('radio-queue-list');
+export const playlistAddModal = document.getElementById('playlist-add-modal');
+export const btnCloseModal = document.getElementById('btn-close-modal');
+export const addModalList = document.getElementById('add-modal-list');

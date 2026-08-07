@@ -2,7 +2,10 @@
 ==============================================================================
 Chemin : frontend/index.html
 Utilité : Structure principale de l'interface utilisateur (HTML5).
-Mise à jour : Modification de la valeur par défaut du volume-slider à 0.5 (50%).
+Modifications :
+  - Suppression du texte par défaut "Lecture en cours" dans le span 
+    #full-player-status. L'élément est conservé pour les statuts Gemini.
+  - Nettoyage des anciennes classes du modal d'ajout de playlist.
 ==============================================================================
 -->
 <!DOCTYPE html>
@@ -22,13 +25,8 @@ Mise à jour : Modification de la valeur par défaut du volume-slider à 0.5 (50
 
     <div class="app-container">
 
+        <!-- TOP BAR FIXE -->
         <header class="top-zone">
-            <button id="btn-library" class="btn-icon header-icon" aria-label="Bibliothèque">
-                <svg class="svg-icon" viewBox="0 0 24 24">
-                    <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
-                </svg>
-            </button>
-
             <div class="search-wrapper">
                 <div class="search-bar">
                     <input type="text" id="search-input" placeholder="Rechercher un titre..." autocomplete="off">
@@ -46,119 +44,199 @@ Mise à jour : Modification de la valeur par défaut du volume-slider à 0.5 (50
                 <input type="range" id="volume-slider" class="volume-slider hidden" min="0" max="1" step="0.01"
                     value="0.5">
             </div>
+
+            <div class="fab-wrapper header-icon">
+                <button id="toggle-btn" class="fab-btn btn-disconnected"></button>
+            </div>
         </header>
 
-        <main class="player-zone hidden" id="player-container">
-            <img id="track-cover" src="" alt="Pochette de l'album" class="hidden">
+        <!-- CONTENEUR DES VUES (SPA) -->
+        <main id="app-content" class="content-zone">
 
-            <div class="track-info">
-                <div class="track-text">
-                    <h2 id="track-title">Titre</h2>
-                    <h3 id="track-artist">Artiste</h3>
+            <!-- VUE 1 : ACCUEIL -->
+            <section id="view-home" class="view-section">
+                <div class="carousel-container">
+                    <div class="section-header">
+                        <h2 id="title-recent" class="section-title">Écoutés récemment</h2>
+                        <button id="btn-recent-all" class="btn-text hidden">Tout afficher</button>
+                    </div>
+                    <div id="recent-carousel" class="carousel-viewport">
+                        <!-- Pages 3x3 générées par JS -->
+                    </div>
+                    <div id="recent-pagination" class="pagination-dots"></div>
                 </div>
-                <button id="btn-add-playlist" class="btn-icon" aria-label="Ajouter à une playlist">
-                    <svg class="svg-icon" viewBox="0 0 24 24">
-                        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                    </svg>
-                </button>
+
+                <div class="carousel-container">
+                    <div class="section-header">
+                        <h2 id="title-playlists" class="section-title">Mes Playlists</h2>
+                    </div>
+                    <div id="playlists-carousel" class="carousel-viewport">
+                        <!-- Pages 2x3 générées par JS -->
+                    </div>
+                    <div id="playlists-pagination" class="pagination-dots"></div>
+                </div>
+            </section>
+
+            <!-- VUE 2 : DÉTAIL PLAYLIST -->
+            <section id="view-playlist" class="view-section hidden">
+                <div class="playlist-sticky-header">
+                    <div class="view-header playlist-header-centered">
+                        <button id="btn-playlist-back" class="btn-icon header-back-btn">
+                            <svg class="svg-icon" viewBox="0 0 24 24">
+                                <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+                            </svg>
+                        </button>
+                        <h2 id="view-playlist-title" class="view-title">Titre Playlist</h2>
+                    </div>
+                    <div class="view-actions">
+                        <button id="btn-playlist-play-all" class="btn-play-all">
+                            <svg class="svg-icon-small" style="vertical-align: middle; margin-right: 5px;"
+                                viewBox="0 0 24 24">
+                                <path d="M8 5v14l11-7z" />
+                            </svg>
+                            Tout lire
+                        </button>
+                    </div>
+                </div>
+                <div id="playlist-tracks-container" class="list-container">
+                    <!-- Rempli par JS -->
+                </div>
+            </section>
+
+            <!-- VUE 3 : COLLECTION (TOUT AFFICHER) -->
+            <section id="view-collection" class="view-section hidden">
+                <div class="playlist-sticky-header">
+                    <div class="view-header playlist-header-centered">
+                        <button id="btn-collection-back" class="btn-icon header-back-btn">
+                            <svg class="svg-icon" viewBox="0 0 24 24">
+                                <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
+                            </svg>
+                        </button>
+                        <h2 id="view-collection-title" class="view-title">Collection</h2>
+                    </div>
+                </div>
+                <div id="collection-list-container" class="list-container">
+                    <!-- Rempli par JS -->
+                </div>
+            </section>
+
+        </main>
+
+        <!-- MINI LECTEUR (PERSISTANT) -->
+        <div id="mini-player" class="mini-player hidden">
+            <img id="mini-track-cover" src="" alt="Cover" class="mini-cover">
+            <div class="mini-track-info">
+                <div id="mini-track-title-container" class="marquee-container mini-title">
+                    <span id="mini-track-title" class="marquee-text">Titre</span>
+                </div>
+                <div id="mini-track-artist-container" class="marquee-container mini-artist">
+                    <span id="mini-track-artist" class="marquee-text">Artiste</span>
+                </div>
             </div>
-
-            <div class="progress-container">
-                <span id="time-current">0:00</span>
-                <input type="range" id="progress-bar" value="0" min="0" max="100" step="0.1">
-                <span id="time-total">0:00</span>
-            </div>
-
-            <div class="player-controls">
-                <button id="btn-restart-playlist" class="btn-icon" aria-label="Recommencer la session">
+            <div class="mini-controls">
+                <button id="btn-mini-play-pause" class="btn-icon" aria-label="Lecture">
                     <svg class="svg-icon" viewBox="0 0 24 24">
-                        <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z" />
-                    </svg>
-                </button>
-
-                <button id="btn-prev" class="btn-icon" aria-label="Précédent">
-                    <svg class="svg-icon" viewBox="0 0 24 24">
-                        <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
-                    </svg>
-                </button>
-                <button id="btn-play-pause" class="btn-icon btn-main" aria-label="Lecture">
-                    <svg class="svg-icon-large" viewBox="0 0 24 24">
                         <path d="M8 5v14l11-7z" />
                     </svg>
                 </button>
-                <button id="btn-next" class="btn-icon" aria-label="Suivant">
+                <button id="btn-mini-next" class="btn-icon" aria-label="Suivant">
                     <svg class="svg-icon" viewBox="0 0 24 24">
                         <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
                     </svg>
                 </button>
-
-                <button id="btn-skip-playlist" class="btn-icon" aria-label="Sauter la session">
-                    <svg class="svg-icon" viewBox="0 0 24 24">
-                        <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
-                    </svg>
-                </button>
             </div>
+        </div>
 
-            <div id="queue-preview-container" class="queue-preview-list hidden"></div>
-        </main>
+        <!-- FULL PLAYER (LECTEUR ANCRÉ + FILE D'ATTENTE SCROLLABLE) -->
+        <div id="full-player" class="full-player hidden">
 
-        <footer class="fab-zone">
-            <p id="status-text">Assistant prêt</p>
-            <div class="fab-wrapper">
-                <button id="toggle-btn" class="fab-btn btn-disconnected"></button>
-            </div>
-        </footer>
-
-        <!-- Volet 1 : Bibliothèque Principale -->
-        <div id="library-drawer" class="drawer hidden">
-            <div class="drawer-header">
-                <button id="btn-drawer-back" class="btn-icon hidden">
-                    <svg class="svg-icon" viewBox="0 0 24 24">
-                        <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
-                    </svg>
-                </button>
-                <h2 id="drawer-title" class="hidden">Mes Playlists</h2>
-                <div class="drawer-tabs" id="drawer-tabs">
-                    <button id="tab-playlists" class="tab-btn active">Playlists</button>
-                    <button id="tab-discovery" class="tab-btn">Écoutés récemment</button>
+            <div class="full-player-top">
+                <div class="full-player-header">
+                    <button id="btn-minimize-player" class="btn-icon" aria-label="Réduire le lecteur">
+                        <svg class="svg-icon" viewBox="0 0 24 24">
+                            <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
+                        </svg>
+                    </button>
+                    <!-- Affichage de l'état Gemini/API uniquement (vide par défaut) -->
+                    <span id="full-player-status" style="margin-right: 35px;"></span>
                 </div>
 
-                <div style="display: flex; gap: 10px;">
-                    <button id="btn-drawer-refresh" class="btn-icon" aria-label="Rafraîchir">
+                <img id="track-cover" src="" alt="Pochette de l'album" class="full-cover">
+
+                <div class="track-info">
+                    <div class="track-text">
+                        <h2 id="track-title-container" class="marquee-container">
+                            <span id="track-title" class="marquee-text">Titre</span>
+                        </h2>
+                        <h3 id="track-artist-container" class="marquee-container">
+                            <span id="track-artist" class="marquee-text">Artiste</span>
+                        </h3>
+                    </div>
+                    <button id="btn-add-playlist" class="btn-icon" aria-label="Ajouter à une playlist">
                         <svg class="svg-icon" viewBox="0 0 24 24">
-                            <path
-                                d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+                            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                        </svg>
+                    </button>
+                </div>
+
+                <div class="progress-container">
+                    <span id="time-current">0:00</span>
+                    <input type="range" id="progress-bar" value="0" min="0" max="100" step="0.1">
+                    <span id="time-total">0:00</span>
+                </div>
+
+                <div class="player-controls">
+                    <button id="btn-restart-playlist" class="btn-icon" aria-label="Recommencer la session">
+                        <svg class="svg-icon" viewBox="0 0 24 24">
+                            <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z" />
+                        </svg>
+                    </button>
+                    <button id="btn-prev" class="btn-icon" aria-label="Précédent">
+                        <svg class="svg-icon" viewBox="0 0 24 24">
+                            <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                        </svg>
+                    </button>
+                    <button id="btn-play-pause" class="btn-icon btn-main" aria-label="Lecture">
+                        <svg class="svg-icon-large" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z" />
+                        </svg>
+                    </button>
+                    <button id="btn-next" class="btn-icon" aria-label="Suivant">
+                        <svg class="svg-icon" viewBox="0 0 24 24">
+                            <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                        </svg>
+                    </button>
+                    <button id="btn-skip-playlist" class="btn-icon" aria-label="Sauter la session">
+                        <svg class="svg-icon" viewBox="0 0 24 24">
+                            <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
                         </svg>
                     </button>
                 </div>
             </div>
 
-            <div class="drawer-actions hidden" id="drawer-actions">
-                <button id="btn-drawer-play" class="btn-play-all">
-                    <svg class="svg-icon-small" style="vertical-align: middle; margin-right: 5px;" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z" />
-                    </svg>
-                    Jouer la playlist
-                </button>
+            <div class="full-player-queue">
+                <div id="queue-tracks-container" class="list-container">
+                    <!-- Rempli par JS avec les groupes et headers collants -->
+                </div>
             </div>
-            <div id="library-content" class="drawer-content"></div>
-            <div id="discovery-content" class="drawer-content hidden listen-again-grid"></div>
         </div>
 
-        <!-- Volet 2 : Ajout à une playlist -->
-        <div id="playlist-add-drawer" class="drawer hidden" style="height: 60vh; z-index: 90;">
-            <div class="drawer-header">
-                <h2 style="flex: 1; text-align: center; margin: 0; font-size: 1.1rem;">Ajouter à une playlist</h2>
+        <!-- MODALE AJOUT PLAYLIST -->
+        <div id="playlist-add-modal" class="modal-overlay hidden">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 style="margin: 0; font-size: 1.1rem;">Ajouter à une playlist</h3>
+                    <button id="btn-close-modal" class="btn-icon">
+                        <svg class="svg-icon" viewBox="0 0 24 24">
+                            <path
+                                d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                        </svg>
+                    </button>
+                </div>
+                <div id="add-modal-list" class="list-container" style="margin-top: 15px;">
+                    <!-- Rempli par JS -->
+                </div>
             </div>
-            <div id="add-drawer-list" class="drawer-content" style="padding: 10px 20px;"></div>
-        </div>
-
-        <!-- Volet 3 : File d'attente (Queue Drawer) -->
-        <div id="queue-drawer" class="drawer hidden" style="height: 75vh; z-index: 85;">
-            <div class="drawer-header">
-                <h2 style="flex: 1; text-align: center; margin: 0; font-size: 1.2rem;">File d'attente</h2>
-            </div>
-            <div id="queue-content" class="drawer-content" style="padding: 0;"></div>
         </div>
 
     </div>
