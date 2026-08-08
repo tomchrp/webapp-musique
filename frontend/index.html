@@ -1,11 +1,12 @@
 <!--
 ==============================================================================
 Chemin : frontend/index.html
-Utilité : Structure principale de l'interface utilisateur (HTML5).
+Utilité : Structure principale de l'interface utilisateur (HTML5) constituant 
+          le squelette de la Single Page Application (SPA).
 Modifications :
-  - Suppression du texte par défaut "Lecture en cours" dans le span 
-    #full-player-status. L'élément est conservé pour les statuts Gemini.
-  - Nettoyage des anciennes classes du modal d'ajout de playlist.
+  - Restructuration du bloc .volume-control : Ajout des conteneurs 
+    .volume-slider-container et .volume-slider-bg pour permettre 
+    l'affichage au survol avec une zone de maintien de focus.
 ==============================================================================
 -->
 <!DOCTYPE html>
@@ -22,6 +23,12 @@ Modifications :
     <div id="background-blur"></div>
 
     <div id="toast-container" class="hidden"></div>
+
+    <!-- MENU CONTEXTUEL GLOBAL -->
+    <div id="context-menu" class="context-menu hidden">
+        <div class="context-menu-item" id="menu-edit">Renommer / Réorganiser</div>
+        <div class="context-menu-item text-danger" id="menu-delete">Supprimer la playlist</div>
+    </div>
 
     <div class="app-container">
 
@@ -41,8 +48,13 @@ Modifications :
                             d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
                     </svg>
                 </button>
-                <input type="range" id="volume-slider" class="volume-slider hidden" min="0" max="1" step="0.01"
-                    value="0.5">
+                <!-- Zone de maintien et fond de la jauge verticale -->
+                <div class="volume-slider-container">
+                    <div class="volume-slider-bg">
+                        <input type="range" id="volume-slider" class="volume-slider" min="0" max="1" step="0.01"
+                            value="0.5">
+                    </div>
+                </div>
             </div>
 
             <div class="fab-wrapper header-icon">
@@ -86,9 +98,23 @@ Modifications :
                                 <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z" />
                             </svg>
                         </button>
+
                         <h2 id="view-playlist-title" class="view-title">Titre Playlist</h2>
+                        <input type="text" id="edit-playlist-title" class="hidden playlist-title-input"
+                            autocomplete="off" spellcheck="false" />
+
+                        <div class="header-right-actions">
+                            <button id="btn-playlist-options" class="btn-icon">
+                                <svg class="svg-icon" viewBox="0 0 24 24">
+                                    <path
+                                        d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
+                                </svg>
+                            </button>
+                            <button id="btn-exit-edit-mode" class="btn-text hidden"
+                                style="margin-left: 10px;">Terminer</button>
+                        </div>
                     </div>
-                    <div class="view-actions">
+                    <div id="playlist-actions-container" class="view-actions">
                         <button id="btn-playlist-play-all" class="btn-play-all">
                             <svg class="svg-icon-small" style="vertical-align: middle; margin-right: 5px;"
                                 viewBox="0 0 24 24">
@@ -235,6 +261,23 @@ Modifications :
                 </div>
                 <div id="add-modal-list" class="list-container" style="margin-top: 15px;">
                     <!-- Rempli par JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- MODALE SUPPRESSION PLAYLIST -->
+        <div id="delete-playlist-modal" class="modal-overlay hidden">
+            <div class="modal-content" style="max-width: 350px;">
+                <div class="modal-header">
+                    <h3 style="margin: 0; font-size: 1.1rem; color: #ff4444;">Supprimer la playlist</h3>
+                </div>
+                <div style="margin: 20px 0; font-size: 0.95rem; line-height: 1.4;">
+                    Êtes-vous sûr de vouloir supprimer définitivement cette playlist ? Cette action est irréversible.
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 15px;">
+                    <button id="btn-cancel-delete" class="btn-text">Annuler</button>
+                    <button id="btn-confirm-delete" class="btn-text"
+                        style="background: #ff4444; color: white; border-color: #ff4444;">Supprimer</button>
                 </div>
             </div>
         </div>

@@ -2,8 +2,8 @@
 ==============================================================================
 Chemin : frontend/js/constants.js
 Utilité : Référentiel centralisé des éléments du DOM et des icônes SVG.
-Modifications :
-  - Suppression de btnPlaylistsAll retiré de l'interface.
+          Mise à jour : Ajout des icônes 3 points et de poignée (drag).
+          Mappage des nouveaux éléments du DOM pour la gestion des playlists.
 ==============================================================================
 */
 
@@ -20,6 +20,9 @@ export const SVG_SKIP_BWD = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="
 export const SVG_ADD_QUEUE = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/></svg>`;
 export const SVG_MINI_PLAY = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`;
 export const SVG_MINI_PAUSE = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+
+export const SVG_THREE_DOTS = `<svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>`;
+export const SVG_DRAG_HANDLE = `<svg class="svg-icon-small" viewBox="0 0 24 24"><path d="M20 9H4v2h16V9zM4 15h16v-2H4v2z"/></svg>`;
 
 export const searchInput = document.getElementById('search-input');
 export const searchResults = document.getElementById('search-results');
@@ -39,8 +42,14 @@ export const titlePlaylists = document.getElementById('title-playlists');
 
 export const recentCarousel = document.getElementById('recent-carousel');
 export const playlistsCarousel = document.getElementById('playlists-carousel');
+
 export const viewPlaylistTitle = document.getElementById('view-playlist-title');
+export const editPlaylistTitle = document.getElementById('edit-playlist-title');
+export const btnPlaylistOptions = document.getElementById('btn-playlist-options');
+export const btnExitEditMode = document.getElementById('btn-exit-edit-mode');
+export const playlistActionsContainer = document.getElementById('playlist-actions-container');
 export const playlistTracksContainer = document.getElementById('playlist-tracks-container');
+
 export const queueTracksContainer = document.getElementById('queue-tracks-container');
 export const collectionListContainer = document.getElementById('collection-list-container');
 export const viewCollectionTitle = document.getElementById('view-collection-title');
@@ -52,6 +61,14 @@ export const btnRecentAll = document.getElementById('btn-recent-all');
 export const btnPlaylistBack = document.getElementById('btn-playlist-back');
 export const btnCollectionBack = document.getElementById('btn-collection-back');
 export const btnPlaylistPlayAll = document.getElementById('btn-playlist-play-all');
+
+export const contextMenu = document.getElementById('context-menu');
+export const menuEdit = document.getElementById('menu-edit');
+export const menuDelete = document.getElementById('menu-delete');
+
+export const deletePlaylistModal = document.getElementById('delete-playlist-modal');
+export const btnCancelDelete = document.getElementById('btn-cancel-delete');
+export const btnConfirmDelete = document.getElementById('btn-confirm-delete');
 
 export const miniPlayer = document.getElementById('mini-player');
 export const miniTrackCover = document.getElementById('mini-track-cover');

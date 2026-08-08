@@ -3,17 +3,27 @@
 Chemin : backend/api/music_routes.py
 Utilité : Définition des routes de l'API REST liées à la gestion de la
           bibliothèque musicale (Playlists, recherche textuelle, écoutes récentes).
+          Mise à jour : Ajout des méthodes DELETE et PATCH pour la suppression, 
+          le renommage et le réarrangement, ainsi que l'extraction du setVideoId.
 ==============================================================================
 """
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 from backend.services.ytmusic_service import ytmusic_service
 
 router = APIRouter()
 
 class AddTrackRequest(BaseModel):
     video_id: str
+
+class RenamePlaylistRequest(BaseModel):
+    new_title: str
+
+class ReorderPlaylistRequest(BaseModel):
+    set_video_id: str
+    move_before_set_video_id: Optional[str] = None
 
 @router.get("/api/playlists")
 async def api_get_playlists():
@@ -45,6 +55,8 @@ async def api_get_playlist_details(playlist_id: str):
     """
     Descriptif :
     Récupère les détails d'une playlist spécifique incluant la liste de ses pistes.
+    Inclut désormais le setVideoId indispensable pour cibler précisément un 
+    élément lors d'un déplacement ou d'une suppression au sein de la playlist.
     """
     try:
         details = await ytmusic_service.get_playlist_details(playlist_id)
@@ -55,6 +67,7 @@ async def api_get_playlist_details(playlist_id: str):
             thumbnail_url = thumbnails[-1]['url'] if thumbnails else ""
             tracks_formatees.append({
                 "video_id": track.get('videoId'),
+                "set_video_id": track.get('setVideoId'),
                 "title": track.get('title', 'Titre inconnu'),
                 "artist": artist_name,
                 "thumbnail": thumbnail_url
@@ -69,13 +82,49 @@ async def api_get_playlist_details(playlist_id: str):
         print(f"Erreur api_get_playlist_details : {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de la récupération de la playlist.")
 
-@router.get("/api/search/live")
-async def api_search_live(q: str):
+@router.delete("/api/playlists/{playlist_id}")
+async def api_delete_playlist(playlist_id: str):
     """
     Descriptif :
-    Route appelée lors de la frappe dans la barre de recherche du client.
-    Renvoie les suggestions de pistes correspondantes.
+    Transmet l'instruction de suppression définitive de la playlist ciblée.
     """
+    try:
+        await ytmusic_service.delete_playlist(playlist_id)
+        return {"status": "success"}
+    except Exception as e:
+        print(f"Erreur api_delete_playlist : {e}")
+        raise HTTPException(status_code=500, detail="Impossible de supprimer la playlist.")
+
+@router.patch("/api/playlists/{playlist_id}/rename")
+async def api_rename_playlist(playlist_id: str, request: RenamePlaylistRequest):
+    """
+    Descriptif :
+    Modifie le titre de la playlist spécifiée.
+    """
+    try:
+        await ytmusic_service.rename_playlist(playlist_id, request.new_title)
+        return {"status": "success"}
+    except Exception as e:
+        print(f"Erreur api_rename_playlist : {e}")
+        raise HTTPException(status_code=500, detail="Impossible de renommer la playlist.")
+
+@router.patch("/api/playlists/{playlist_id}/reorder")
+async def api_reorder_playlist(playlist_id: str, request: ReorderPlaylistRequest):
+    """
+    Descriptif :
+    Réordonne la playlist. L'élément cible (set_video_id) sera déplacé juste 
+    avant l'élément de référence (move_before_set_video_id). Si ce dernier est 
+    nul, l'élément sera placé à la toute fin de la liste.
+    """
+    try:
+        await ytmusic_service.reorder_playlist(playlist_id, request.set_video_id, request.move_before_set_video_id)
+        return {"status": "success"}
+    except Exception as e:
+        print(f"Erreur api_reorder_playlist : {e}")
+        raise HTTPException(status_code=500, detail="Impossible de déplacer ce titre.")
+
+@router.get("/api/search/live")
+async def api_search_live(q: str):
     if not q:
         return []
     try:
@@ -98,10 +147,6 @@ async def api_search_live(q: str):
 
 @router.post("/api/playlists/{playlist_id}/add")
 async def api_add_to_playlist(playlist_id: str, request: AddTrackRequest):
-    """
-    Descriptif :
-    Ajoute un titre spécifique à une playlist de l'utilisateur.
-    """
     try:
         await ytmusic_service.add_to_playlist(playlist_id, [request.video_id])
         return {"status": "success"}
@@ -111,11 +156,6 @@ async def api_add_to_playlist(playlist_id: str, request: AddTrackRequest):
     
 @router.get("/api/home/listen-again")
 async def api_get_listen_again():
-    """
-    Descriptif :
-    Récupère la section 'Écoutés récemment' depuis la page d'accueil de 
-    YouTube Music pour la découverte rapide dans le tiroir latéral.
-    """
     try:
         contents = await ytmusic_service.get_listen_again()
         formatted = []

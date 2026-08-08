@@ -3,10 +3,9 @@
 Chemin : frontend/style.css
 Utilité : Feuille de style principale de l'application (SPA).
 Modifications :
-  - Harmonisation stricte de .playlist-card sur le modèle de .recent-item.
-  - Ajout des classes .cover-overlay et .cover-title pour ancrer le texte 
-    à l'intérieur de la miniature avec un dégradé de protection.
-  - Nettoyage des anciennes marges des images de playlists.
+  - Création de l'animation dédiée @keyframes fade-in-volume pour préserver 
+    le centrage (translateX(-50%)) pendant l'apparition au survol.
+  - Correction du bug visuel de "saut" du conteneur .volume-slider-container.
 ==============================================================================
 */
 
@@ -86,7 +85,8 @@ html {
     align-items: center;
     gap: 15px;
     padding: 15px 20px 10px 20px;
-    z-index: 20;
+    position: relative;
+    z-index: 35;
     background: linear-gradient(180deg, rgba(18, 18, 18, 0.8) 0%, rgba(18, 18, 18, 0) 100%);
 }
 
@@ -232,25 +232,65 @@ html {
     color: var(--text-color);
 }
 
+/* Nouvelles règles pour le contrôle du volume */
 .volume-control {
     position: relative;
     display: flex;
+    justify-content: center;
+}
+
+.volume-slider-container {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding-top: 15px;
+    /* Maintien du survol */
+    display: none;
+    z-index: 40;
+}
+
+.volume-control:hover .volume-slider-container {
+    display: flex;
+    animation: fade-in-volume 0.2s ease-out;
+}
+
+@keyframes fade-in-volume {
+    from {
+        opacity: 0;
+        /* Le translateX(-50%) est maintenu pendant l'animation Y */
+        transform: translate(-50%, 10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translate(-50%, 0);
+    }
+}
+
+.volume-slider-bg {
+    background: rgba(30, 30, 30, 0.95);
+    backdrop-filter: blur(15px);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    width: 40px;
+    height: 130px;
+    display: flex;
+    justify-content: center;
     align-items: center;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 
 .volume-slider {
-    position: absolute;
-    top: 140%;
-    right: 0;
-    width: 100px;
     -webkit-appearance: none;
-    background: rgba(255, 255, 255, 0.2);
+    width: 100px;
     height: 6px;
+    background: rgba(255, 255, 255, 0.2);
     border-radius: 3px;
     outline: none;
-    transition: opacity 0.2s;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-    z-index: 30;
+    cursor: pointer;
+    transform: rotate(270deg);
+    /* Rendu vertical robuste */
 }
 
 .volume-slider::-webkit-slider-thumb {
@@ -324,7 +364,6 @@ html {
     }
 }
 
-/* VERROUILLAGE DU SCROLL VERTICAL POUR LE LANDING */
 #view-home {
     height: 100%;
     overflow: hidden;
@@ -336,6 +375,7 @@ html {
     justify-content: space-between;
     align-items: center;
     margin: 5px 0;
+    padding: 0 25px;
 }
 
 .section-title {
@@ -411,7 +451,6 @@ html {
     grid-template-rows: repeat(2, 1fr);
 }
 
-/* Cartes harmonisées (Écoutes récentes & Playlists) */
 .recent-item,
 .playlist-card {
     width: 100%;
@@ -443,19 +482,16 @@ html {
     border: 3px solid var(--accent-color);
 }
 
-/* Textes incrustés sur les Covers (Landing) */
 .cover-overlay {
     position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
     padding: 30px 10px 10px 10px;
-    /* Padding étendu pour le dégradé */
     background: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.9) 100%);
     display: flex;
     align-items: flex-end;
     pointer-events: none;
-    /* Le survol est capté par la carte parente */
 }
 
 .cover-title {
@@ -677,7 +713,6 @@ html {
     margin-left: 10px;
 }
 
-/* Conteneur d'effet Marquee robuste */
 .marquee-container {
     overflow: hidden;
     white-space: nowrap;
@@ -724,7 +759,7 @@ html {
     flex-direction: column;
     align-items: center;
     flex-shrink: 0;
-    padding: 20px 20px 0 20px;
+    padding: 85px 20px 0 20px;
     box-sizing: border-box;
 }
 
@@ -924,4 +959,104 @@ input[type="range"]#progress-bar::-webkit-slider-thumb {
     color: transparent !important;
     border-radius: 8px;
     user-select: none;
+}
+
+.context-menu {
+    position: absolute;
+    background: rgba(30, 30, 30, 0.95);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 8px 0;
+    min-width: 200px;
+    z-index: 50;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    transform-origin: top right;
+    animation: scale-in 0.15s ease-out;
+}
+
+@keyframes scale-in {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.context-menu-item {
+    padding: 12px 20px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.context-menu-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.text-danger {
+    color: #ff4444;
+}
+
+.header-right-actions {
+    position: absolute;
+    right: 0;
+    display: flex;
+    align-items: center;
+}
+
+.playlist-title-input {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--accent-color);
+    border-radius: 8px;
+    color: white;
+    font-size: 1.4rem;
+    font-weight: 700;
+    padding: 5px 10px;
+    outline: none;
+    width: 60%;
+    text-align: center;
+    box-shadow: 0 0 10px rgba(29, 185, 84, 0.2);
+}
+
+.edit-mode-active .library-item {
+    cursor: grab;
+}
+
+.edit-mode-active .library-item:active {
+    cursor: grabbing;
+}
+
+.drag-handle {
+    display: none;
+    margin-right: 10px;
+    cursor: grab;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+}
+
+.drag-handle:hover {
+    opacity: 1;
+}
+
+.edit-mode-active .drag-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.library-item.dragging {
+    opacity: 0.4;
+    background: rgba(255, 255, 255, 0.15);
+    transform: scale(0.98);
+}
+
+.library-item.drag-over {
+    border-top: 2px solid var(--accent-color);
+    margin-top: 5px;
 }

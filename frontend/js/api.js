@@ -3,6 +3,7 @@
 Chemin : frontend/js/api.js
 Utilité : Couche réseau du frontend. Encapsule tous les appels asynchrones 
           (fetch) vers l'API backend REST et renvoie les données JSON.
+          Mise à jour : Ajout des requêtes DELETE et PATCH.
 ==============================================================================
 */
 
@@ -69,6 +70,34 @@ export async function addToPlaylist(playlistId, videoId) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ video_id: videoId })
+    });
+    return response.json();
+}
+
+export async function deletePlaylist(playlistId) {
+    const response = await fetch(`/api/playlists/${playlistId}`, {
+        method: 'DELETE'
+    });
+    return response.json();
+}
+
+export async function renamePlaylist(playlistId, newTitle) {
+    const response = await fetch(`/api/playlists/${playlistId}/rename`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_title: newTitle })
+    });
+    return response.json();
+}
+
+export async function reorderPlaylist(playlistId, setVideoId, moveBeforeSetVideoId) {
+    const response = await fetch(`/api/playlists/${playlistId}/reorder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            set_video_id: setVideoId,
+            move_before_set_video_id: moveBeforeSetVideoId
+        })
     });
     return response.json();
 }

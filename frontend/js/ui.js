@@ -3,11 +3,10 @@
 Chemin : frontend/js/ui.js
 Utilité : Fonctions de manipulation visuelle et gestionnaire de Vues (SPA).
 Modifications :
-  - Centralisation et export de handleMarqueeEnter et handleMarqueeLeave.
-  - Modification de renderListenAgain et renderPlaylistsList pour injecter
-    les titres en surcouche (overlay) dans l'image.
-  - Attachement dynamique des écouteurs de survol sur chaque carte générée.
-  - Skeletons simplifiés (uniquement des blocs carrés).
+  - Intégration de la poignée de drag (SVG_DRAG_HANDLE) et de l'attribut 
+    setVideoId dans renderPlaylistTracks.
+  - Ajout des contrôleurs du menu contextuel (showContextMenu, hideContextMenu).
+  - Ajout du contrôleur du mode édition (toggleEditMode).
 ==============================================================================
 */
 
@@ -28,10 +27,6 @@ export function formatTime(seconds) {
     const s = Math.floor(seconds % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
 }
-
-// ==========================================
-// MÉCANIQUE DÉFILEMENT TEXTE (MARQUEE)
-// ==========================================
 
 export const handleMarqueeEnter = (e) => {
     const container = e.currentTarget;
@@ -115,10 +110,7 @@ export function updatePhantomPadding() {
 export function showMiniPlayer(trackData) {
     DOM.miniTrackTitle.textContent = trackData.title || "Titre inconnu";
     DOM.miniTrackArtist.textContent = trackData.artist || "Artiste inconnu";
-
-    if (trackData.thumbnail) {
-        DOM.miniTrackCover.src = trackData.thumbnail;
-    }
+    if (trackData.thumbnail) DOM.miniTrackCover.src = trackData.thumbnail;
 
     DOM.btnMiniPlayPause.innerHTML = DOM.SVG_MINI_PAUSE;
     DOM.miniPlayer.classList.remove('hidden');
@@ -132,24 +124,15 @@ export function toggleFullPlayer(show) {
         DOM.fullPlayer.classList.add('player-active');
     } else {
         DOM.fullPlayer.classList.remove('player-active');
-        setTimeout(() => {
-            DOM.fullPlayer.classList.add('hidden');
-        }, 400);
+        setTimeout(() => DOM.fullPlayer.classList.add('hidden'), 400);
     }
 }
 
 export function highlightActiveTrack(videoId) {
     AppState.activeVideoId = videoId;
-
-    document.querySelectorAll('.track-active').forEach(el => {
-        el.classList.remove('track-active');
-    });
-
+    document.querySelectorAll('.track-active').forEach(el => el.classList.remove('track-active'));
     if (!videoId) return;
-
-    document.querySelectorAll(`[data-video-id="${videoId}"]`).forEach(el => {
-        el.classList.add('track-active');
-    });
+    document.querySelectorAll(`[data-video-id="${videoId}"]`).forEach(el => el.classList.add('track-active'));
 }
 
 export function renderListenAgainSkeleton() {
@@ -159,7 +142,6 @@ export function renderListenAgainSkeleton() {
     pageDiv.className = 'carousel-page';
     for (let i = 0; i < 9; i++) {
         const item = document.createElement('div');
-        // Structure purgée de tout texte pour le Skeleton
         item.className = 'recent-item skeleton';
         pageDiv.appendChild(item);
     }
@@ -273,7 +255,6 @@ export function renderListenAgain(items) {
                 if (AppState.activeVideoId === item.id) div.classList.add('track-active');
             }
 
-            // Injection du titre en surcouche (Overlay) avec l'effet Marquee prêt
             div.innerHTML = `
                 <img src="${item.thumbnail}" alt="Cover">
                 <div class="cover-overlay">
@@ -283,7 +264,6 @@ export function renderListenAgain(items) {
                 </div>
             `;
 
-            // On capte le survol de la carte entière pour animer le texte interne
             div.addEventListener('mouseenter', (e) => {
                 const container = div.querySelector('.marquee-container');
                 if (container) handleMarqueeEnter({ currentTarget: container });
@@ -361,7 +341,6 @@ export function renderPlaylistsList(playlists) {
             item.className = 'playlist-card';
             const thumbSrc = playlist.thumbnail ? playlist.thumbnail : 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 
-            // Injection du titre en surcouche (Overlay), suppression du sous-titre complet
             item.innerHTML = `
                 <img src="${thumbSrc}" alt="Cover">
                 <div class="cover-overlay">
@@ -371,7 +350,6 @@ export function renderPlaylistsList(playlists) {
                 </div>
             `;
 
-            // Animation du texte au survol de la carte
             item.addEventListener('mouseenter', (e) => {
                 const container = item.querySelector('.marquee-container');
                 if (container) handleMarqueeEnter({ currentTarget: container });
@@ -423,15 +401,27 @@ export async function loadPlaylistDetails(playlistId, title) {
 }
 
 export function renderPlaylistTracks(data) {
+    /*
+    Descriptif :
+    Génère la liste DOM des pistes d'une playlist. 
+    Intègre désormais l'icône de poignée (drag handle) pour le mode édition 
+    et injecte l'attribut setVideoId nécessaire au Drag & Drop et à l'API YouTube.
+    */
     DOM.playlistTracksContainer.innerHTML = '';
     if (!data.tracks || data.tracks.length === 0) {
         DOM.playlistTracksContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted);">Playlist vide.</div>';
         return;
     }
+
     data.tracks.forEach(track => {
         const item = document.createElement('div');
         item.className = 'library-item';
         item.dataset.videoId = track.video_id;
+
+        if (track.set_video_id) {
+            item.dataset.setVideoId = track.set_video_id;
+        }
+        item.draggable = true; // Indispensable pour l'API HTML5 native
 
         if (AppState.activeVideoId === track.video_id) {
             item.classList.add('track-active');
@@ -439,17 +429,82 @@ export function renderPlaylistTracks(data) {
 
         const thumbSrc = track.thumbnail ? track.thumbnail : 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
         item.innerHTML = `
+            <div class="drag-handle">${DOM.SVG_DRAG_HANDLE}</div>
             <img src="${thumbSrc}" alt="Cover">
             <div class="library-item-info">
                 <span class="library-item-title">${track.title}</span>
                 <span class="library-item-subtitle">${track.artist}</span>
             </div>
         `;
+
         item.addEventListener('click', () => {
+            if (AppState.isEditModeActive) return; // Bloque la lecture si on réordonne
             playPlaylistTrack(AppState.currentPlaylistId, track.video_id);
         });
+
         DOM.playlistTracksContainer.appendChild(item);
     });
+}
+
+export function showContextMenu(x, y) {
+    /*
+    Descriptif :
+    Affiche le menu contextuel aux coordonnées cliquées.
+    Ajuste dynamiquement la position si le menu risque de déborder de l'écran.
+    */
+    AppState.contextMenuOpen = true;
+    DOM.contextMenu.classList.remove('hidden');
+
+    DOM.contextMenu.style.visibility = 'hidden';
+    const rect = DOM.contextMenu.getBoundingClientRect();
+    DOM.contextMenu.style.visibility = 'visible';
+
+    let posX = x;
+    let posY = y + 10;
+
+    if (posX + rect.width > window.innerWidth) {
+        posX = window.innerWidth - rect.width - 10;
+    }
+    if (posY + rect.height > window.innerHeight) {
+        posY = y - rect.height - 10;
+    }
+
+    DOM.contextMenu.style.left = `${posX}px`;
+    DOM.contextMenu.style.top = `${posY}px`;
+}
+
+export function hideContextMenu() {
+    AppState.contextMenuOpen = false;
+    DOM.contextMenu.classList.add('hidden');
+}
+
+export function toggleEditMode(activate) {
+    /*
+    Descriptif :
+    Bascule l'interface de la vue playlist entre le mode de lecture normal 
+    et le mode d'édition (Inline Edit du titre et affichage des poignées).
+    */
+    AppState.isEditModeActive = activate;
+
+    if (activate) {
+        DOM.playlistTracksContainer.classList.add('edit-mode-active');
+        DOM.playlistActionsContainer.classList.add('hidden');
+        DOM.btnPlaylistOptions.classList.add('hidden');
+        DOM.btnExitEditMode.classList.remove('hidden');
+
+        DOM.viewPlaylistTitle.classList.add('hidden');
+        DOM.editPlaylistTitle.value = DOM.viewPlaylistTitle.textContent;
+        DOM.editPlaylistTitle.classList.remove('hidden');
+        DOM.editPlaylistTitle.focus();
+    } else {
+        DOM.playlistTracksContainer.classList.remove('edit-mode-active');
+        DOM.playlistActionsContainer.classList.remove('hidden');
+        DOM.btnPlaylistOptions.classList.remove('hidden');
+        DOM.btnExitEditMode.classList.add('hidden');
+
+        DOM.viewPlaylistTitle.classList.remove('hidden');
+        DOM.editPlaylistTitle.classList.add('hidden');
+    }
 }
 
 export function renderQueue(previewQueue) {

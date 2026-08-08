@@ -2,19 +2,21 @@
 ==============================================================================
 Chemin : frontend/js/state.js
 Utilité : Gestionnaire d'état global de l'application frontend.
-Modifications (Refonte SPA) :
-  - Suppression de l'état lié aux tiroirs (isDrawerOpen, currentDrawerState).
-  - Ajout du suivi de la vue active (currentView).
+Modifications :
+  - Ajout de l'état du menu contextuel (contextMenuOpen).
+  - Ajout de l'état du mode édition (isEditModeActive).
 ==============================================================================
 */
 
 export const AppState = {
-    currentView: 'home', // Peut être 'home', 'playlist', 'queue'
+    currentView: 'home',
     currentPlaylistId: null,
     cachedPlaylists: null,
     cachedPlaylistDetails: {},
     cachedListenAgain: null,
-    activeVideoId: null // Utilisé pour la surbrillance
+    activeVideoId: null,
+    contextMenuOpen: false,
+    isEditModeActive: false
 };
 
 export function clearCaches() {

@@ -4,15 +4,15 @@ Chemin : frontend/js/main.js
 Utilité : Point d'entrée principal (Contrôleur SPA). Initialise les vues, 
           attache les écouteurs d'événements et gère l'API History du navigateur.
 Modifications :
-  - Importation de handleMarqueeEnter et handleMarqueeLeave depuis ui.js.
-  - Suppression de la définition locale des fonctions de Marquee.
+  - Nettoyage : Suppression des événements de clic pour le bouton volume, 
+    désormais entièrement géré en CSS via le survol (hover).
 ==============================================================================
 */
 
 import * as DOM from './constants.js';
 import * as API from './api.js';
 import { AppState, clearCaches } from './state.js';
-import { showToast, showView, showLoadingState, removeLoadingState, loadListenAgain, loadPlaylists, toggleFullPlayer, handleMarqueeEnter, handleMarqueeLeave } from './ui.js';
+import { showToast, showView, showLoadingState, removeLoadingState, loadListenAgain, loadPlaylists, toggleFullPlayer, handleMarqueeEnter, handleMarqueeLeave, showContextMenu, hideContextMenu, toggleEditMode } from './ui.js';
 import { PlayerStore, playMusic, playPrevTrack, playNextTrack, playSpecificTrack, fadeIn, fadeOut, addTrackToQueue, skipCurrentPlaylist, restartCurrentPlaylist } from './player.js';
 import { stopConversation, startConversation, GeminiStore } from './gemini.js';
 
@@ -35,21 +35,22 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ==========================================
-// MÉCANISME GLOBAL DE FERMETURE
+// MÉCANISME GLOBAL DE FERMETURE (CLICS EXTÉRIEURS)
 // ==========================================
 
 document.addEventListener('click', (e) => {
-    if (!DOM.btnVolume.contains(e.target) && !DOM.volumeSlider.contains(e.target)) {
-        DOM.volumeSlider.classList.add('hidden');
-    }
     if (!DOM.searchInput.contains(e.target) && !DOM.searchResults.contains(e.target)) {
         DOM.searchResults.classList.add('hidden');
     }
-    
+
     if (!DOM.playlistAddModal.classList.contains('hidden')) {
         if (!DOM.playlistAddModal.querySelector('.modal-content').contains(e.target) && !DOM.btnAddPlaylist.contains(e.target)) {
             DOM.playlistAddModal.classList.add('hidden');
         }
+    }
+
+    if (AppState.contextMenuOpen && !DOM.contextMenu.contains(e.target) && !DOM.btnPlaylistOptions.contains(e.target)) {
+        hideContextMenu();
     }
 });
 
@@ -82,6 +83,176 @@ DOM.btnPlaylistPlayAll.addEventListener('click', async () => {
 });
 
 // ==========================================
+// MENU CONTEXTUEL ET ÉDITION PLAYLIST
+// ==========================================
+
+DOM.btnPlaylistOptions.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (AppState.contextMenuOpen) {
+        hideContextMenu();
+    } else {
+        const rect = e.currentTarget.getBoundingClientRect();
+        showContextMenu(rect.left, rect.bottom);
+    }
+});
+
+DOM.menuEdit.addEventListener('click', () => {
+    hideContextMenu();
+    toggleEditMode(true);
+});
+
+DOM.menuDelete.addEventListener('click', () => {
+    hideContextMenu();
+    DOM.deletePlaylistModal.classList.remove('hidden');
+});
+
+DOM.btnCancelDelete.addEventListener('click', () => {
+    DOM.deletePlaylistModal.classList.add('hidden');
+});
+
+DOM.btnConfirmDelete.addEventListener('click', async () => {
+    DOM.deletePlaylistModal.classList.add('hidden');
+    showLoadingState();
+    try {
+        const result = await API.deletePlaylist(AppState.currentPlaylistId);
+        if (!result.error) {
+            showToast("Playlist supprimée avec succès.");
+            clearCaches();
+            loadPlaylists();
+            history.back();
+        } else {
+            showToast(result.error || "Erreur de suppression.");
+        }
+    } catch (e) {
+        showToast("Erreur réseau.");
+    }
+    removeLoadingState();
+});
+
+const savePlaylistTitle = async () => {
+    const newTitle = DOM.editPlaylistTitle.value.trim();
+    const oldTitle = DOM.viewPlaylistTitle.textContent;
+
+    toggleEditMode(false);
+
+    if (newTitle && newTitle !== oldTitle) {
+        DOM.viewPlaylistTitle.textContent = newTitle;
+        try {
+            const result = await API.renamePlaylist(AppState.currentPlaylistId, newTitle);
+            if (!result.error) {
+                showToast("Playlist renommée avec succès.");
+                clearCaches();
+                loadPlaylists();
+            } else {
+                DOM.viewPlaylistTitle.textContent = oldTitle;
+                showToast("Erreur lors du renommage.");
+            }
+        } catch (e) {
+            DOM.viewPlaylistTitle.textContent = oldTitle;
+            showToast("Erreur réseau.");
+        }
+    }
+};
+
+DOM.btnExitEditMode.addEventListener('click', savePlaylistTitle);
+DOM.editPlaylistTitle.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') savePlaylistTitle();
+});
+
+// ==========================================
+// DRAG AND DROP (RÉORGANISATION PLAYLIST)
+// ==========================================
+
+let draggedItem = null;
+
+DOM.playlistTracksContainer.addEventListener('dragstart', (e) => {
+    if (!AppState.isEditModeActive) {
+        e.preventDefault();
+        return;
+    }
+    draggedItem = e.target.closest('.library-item');
+    if (draggedItem) {
+        draggedItem.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', draggedItem.dataset.setVideoId);
+    }
+});
+
+DOM.playlistTracksContainer.addEventListener('dragover', (e) => {
+    if (!AppState.isEditModeActive || !draggedItem) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    const targetItem = e.target.closest('.library-item');
+    if (targetItem && targetItem !== draggedItem) {
+        const rect = targetItem.getBoundingClientRect();
+        const midpoint = rect.top + rect.height / 2;
+
+        document.querySelectorAll('.library-item.drag-over').forEach(el => el.classList.remove('drag-over'));
+
+        if (e.clientY < midpoint) {
+            targetItem.classList.add('drag-over');
+            targetItem.dataset.dropPosition = 'before';
+        } else {
+            targetItem.classList.add('drag-over');
+            targetItem.dataset.dropPosition = 'after';
+        }
+    }
+});
+
+DOM.playlistTracksContainer.addEventListener('dragleave', (e) => {
+    const targetItem = e.target.closest('.library-item');
+    if (targetItem) targetItem.classList.remove('drag-over');
+});
+
+DOM.playlistTracksContainer.addEventListener('drop', async (e) => {
+    if (!AppState.isEditModeActive || !draggedItem) return;
+    e.preventDefault();
+
+    const targetItem = document.querySelector('.library-item.drag-over');
+    if (!targetItem) {
+        draggedItem.classList.remove('dragging');
+        draggedItem = null;
+        return;
+    }
+
+    targetItem.classList.remove('drag-over');
+    draggedItem.classList.remove('dragging');
+
+    const dropPosition = targetItem.dataset.dropPosition;
+    let moveBeforeSetVideoId = null;
+
+    if (dropPosition === 'before') {
+        DOM.playlistTracksContainer.insertBefore(draggedItem, targetItem);
+        moveBeforeSetVideoId = targetItem.dataset.setVideoId;
+    } else {
+        DOM.playlistTracksContainer.insertBefore(draggedItem, targetItem.nextSibling);
+        const nextNode = targetItem.nextSibling;
+        if (nextNode) moveBeforeSetVideoId = nextNode.dataset.setVideoId;
+    }
+
+    const setVideoId = draggedItem.dataset.setVideoId;
+    draggedItem = null;
+
+    try {
+        const result = await API.reorderPlaylist(AppState.currentPlaylistId, setVideoId, moveBeforeSetVideoId);
+        if (result.error) {
+            showToast("Erreur lors de la synchronisation du déplacement.");
+        } else {
+            AppState.cachedPlaylistDetails[AppState.currentPlaylistId] = null;
+        }
+    } catch (error) {
+        showToast("Erreur réseau lors du déplacement.");
+    }
+});
+
+DOM.playlistTracksContainer.addEventListener('dragend', () => {
+    if (draggedItem) draggedItem.classList.remove('dragging');
+    document.querySelectorAll('.library-item.drag-over').forEach(el => el.classList.remove('drag-over'));
+    draggedItem = null;
+});
+
+// ==========================================
 // SYNCHRONISATION PAGINATION CARROUSEL
 // ==========================================
 
@@ -97,7 +268,7 @@ DOM.recentCarousel.addEventListener('scroll', () => updatePaginationDots(DOM.rec
 DOM.playlistsCarousel.addEventListener('scroll', () => updatePaginationDots(DOM.playlistsCarousel, DOM.playlistsPagination));
 
 // ==========================================
-// DÉFILEMENT TEXTE AU SURVOL (MARQUEE LECTEURS STATIQUES)
+// DÉFILEMENT TEXTE AU SURVOL (MARQUEE)
 // ==========================================
 
 [DOM.trackTitleContainer, DOM.trackArtistContainer, DOM.miniTrackTitleContainer, DOM.miniTrackArtistContainer].forEach(el => {
@@ -156,7 +327,7 @@ DOM.btnAddPlaylist.addEventListener('click', async () => {
         const item = document.createElement('div');
         item.className = 'library-item';
         const thumb = p.thumbnail ? p.thumbnail : 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
-        
+
         item.innerHTML = `
             <img src="${thumb}" alt="Cover">
             <div class="library-item-info">
@@ -189,8 +360,6 @@ DOM.btnAddPlaylist.addEventListener('click', async () => {
 // ==========================================
 // CONTRÔLES AUDIO (VOLUME ET PLAYBACK)
 // ==========================================
-
-DOM.btnVolume.addEventListener('click', () => DOM.volumeSlider.classList.toggle('hidden'));
 
 DOM.volumeSlider.addEventListener('input', (e) => {
     if (PlayerStore.musicPlayer) {

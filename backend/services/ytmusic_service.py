@@ -3,11 +3,8 @@
 Chemin : backend/services/ytmusic_service.py
 Utilité : Couche d'abstraction (Service) pour interagir avec l'API YouTube Music.
           Gère l'authentification et les requêtes vers le compte de l'utilisateur.
-Mise à jour : Intégration de l'authentification dynamique via Firefox. 
-              Génère le jeton SAPISIDHASH à la volée pour contrer l'expiration
-              des sessions et l'App-Bound Encryption de Chrome. Inclut un 
-              mécanisme de "retry" automatique pour reconstruire les en-têtes
-              silencieusement en cas de rejet par les serveurs de Google.
+          Mise à jour : Intégration des fonctions de suppression, de renommage 
+          et de réarrangement des pistes au sein des playlists.
 ==============================================================================
 """
 
@@ -78,9 +75,7 @@ class YTMusicService:
         except Exception as e:
             print(f"[Service YTMusic] Erreur interceptée ({e}). Régénération des en-têtes en cours...")
             try:
-                # Blocage thread synchrone court pour recréer le client
                 self._initialize_client()
-                # Seconde tentative
                 return await asyncio.to_thread(func, *args, **kwargs)
             except Exception as retry_error:
                 print(f"[Service YTMusic] Échec définitif après tentative de récupération : {retry_error}")
@@ -91,20 +86,9 @@ class YTMusicService:
     # ==========================================
 
     async def get_user_playlists(self, limit: int = 100):
-        """
-        Descriptif :
-        Récupère la liste des playlists appartenant à l'utilisateur.
-        Passe par le wrapper de sécurité pour garantir la validité de la session.
-        """
         return await self._execute_with_retry(self.client.get_library_playlists, limit=limit)
 
     async def get_playlist_details(self, playlist_id: str):
-        """
-        Descriptif :
-        Récupère l'intégralité des métadonnées et la liste des pistes associées.
-        Intègre une sécurité pour les "Mix" (ID commençant par RD) qui nécessitent 
-        une méthode d'extraction différente des playlists standards.
-        """
         if playlist_id.startswith('RD'):
             data = await self._execute_with_retry(self.client.get_watch_playlist, playlistId=playlist_id)
             return {
@@ -115,12 +99,6 @@ class YTMusicService:
         return await self._execute_with_retry(self.client.get_playlist, playlist_id)
 
     async def generate_radio(self, video_id: str = None, playlist_id: str = None, radio: bool = True):
-        """
-        Descriptif :
-        Génère une file d'attente continue ou lit strictement une playlist.
-        Accepte la combinaison d'une playlist ET d'une vidéo de départ,
-        ainsi que la désactivation de l'autocomplétion (radio=False).
-        """
         kwargs = {}
         if video_id:
             kwargs['videoId'] = video_id
@@ -134,57 +112,12 @@ class YTMusicService:
         return await self._execute_with_retry(self.client.get_watch_playlist, **kwargs)
 
     async def search_live(self, query: str, limit: int = 5):
-        """
-        Descriptif :
-        Effectue une recherche rapide ciblée uniquement sur les chansons.
-        Cette fonction est optimisée pour fournir les résultats de l'autocomplétion 
-        dans la barre de recherche du frontend.
-        """
         return await self._execute_with_retry(self.client.search, query, filter="songs", limit=limit)
 
     async def search(self, query: str, filter: str = None, limit: int = 1):
-        """
-        Descriptif :
-        Exécute une recherche générale avec possibilité de filtrer par type 
-        (chansons, playlists, artistes). Utilisée principalement par les outils 
-        d'intelligence artificielle pour résoudre les requêtes vocales.
-        """
         return await self._execute_with_retry(self.client.search, query, filter=filter, limit=limit)
 
-    # ==========================================
-    # OPÉRATIONS D'ÉCRITURE
-    # ==========================================
-
-    async def rate_song(self, video_id: str, rating: str = 'LIKE'):
-        """
-        Descriptif :
-        Modifie l'état d'appréciation d'un titre pour l'utilisateur authentifié.
-        Utilisé pour ajouter rapidement le titre en cours de lecture aux favoris.
-        """
-        return await self._execute_with_retry(self.client.rate_song, video_id, rating)
-
-    async def create_playlist(self, title: str, video_ids: list):
-        """
-        Descriptif :
-        Génère une nouvelle playlist avec un statut privé par défaut et y 
-        insère la liste des identifiants vidéo fournis en paramètres.
-        """
-        return await self._execute_with_retry(self.client.create_playlist, title, "", "PRIVATE", video_ids)
-
-    async def add_to_playlist(self, playlist_id: str, video_ids: list):
-        """
-        Descriptif :
-        Insère une liste de vidéos dans une playlist préexistante appartenant 
-        à l'utilisateur.
-        """
-        return await self._execute_with_retry(self.client.add_playlist_items, playlist_id, video_ids)
-
     async def get_listen_again(self):
-        """
-        Descriptif :
-        Récupère la page d'accueil avec une limite très basse (pour la rapidité) 
-        et filtre uniquement la section de recommandations de type "Listen again".
-        """
         try:
             home = await self._execute_with_retry(self.client.get_home, limit=3)
             for row in home:
@@ -194,5 +127,42 @@ class YTMusicService:
         except Exception as e:
             print(f"Erreur get_listen_again : {e}")
             return []
+
+    # ==========================================
+    # OPÉRATIONS D'ÉCRITURE
+    # ==========================================
+
+    async def rate_song(self, video_id: str, rating: str = 'LIKE'):
+        return await self._execute_with_retry(self.client.rate_song, video_id, rating)
+
+    async def create_playlist(self, title: str, video_ids: list):
+        return await self._execute_with_retry(self.client.create_playlist, title, "", "PRIVATE", video_ids)
+
+    async def add_to_playlist(self, playlist_id: str, video_ids: list):
+        return await self._execute_with_retry(self.client.add_playlist_items, playlist_id, video_ids)
+
+    async def delete_playlist(self, playlist_id: str):
+        """
+        Descriptif :
+        Supprime définitivement une playlist de la bibliothèque de l'utilisateur.
+        """
+        return await self._execute_with_retry(self.client.delete_playlist, playlist_id)
+
+    async def rename_playlist(self, playlist_id: str, new_title: str):
+        """
+        Descriptif :
+        Modifie le titre d'une playlist existante.
+        """
+        return await self._execute_with_retry(self.client.edit_playlist, playlist_id, title=new_title)
+
+    async def reorder_playlist(self, playlist_id: str, set_video_id: str, move_before_set_video_id: str = None):
+        """
+        Descriptif :
+        Déplace une piste dans une playlist. ytmusicapi requiert un tuple contenant 
+        le setVideoId de l'élément à déplacer, et le setVideoId de l'élément 
+        devant lequel il doit être placé (None pour le mettre à la toute fin).
+        """
+        move_item = (set_video_id, move_before_set_video_id)
+        return await self._execute_with_retry(self.client.edit_playlist, playlist_id, moveItem=move_item)
 
 ytmusic_service = YTMusicService()
